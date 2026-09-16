@@ -1,0 +1,16 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Outcome Fixture — Transfer</title>
+</head>
+<body>
+  <h1>Transfer Funds</h1>
+  <label for="amount">Amount</label>
+  <input id="amount" name="amount" type="text">
+  <button id="transfer" onclick="document.getElementById('error').style.display='block'">Transfer</button>
+  <div id="error" class="error" style="display: none">
+    Error: insufficient funds for this transfer
+  </div>
+</body>
+</html>

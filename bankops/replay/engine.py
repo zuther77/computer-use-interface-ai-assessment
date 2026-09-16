@@ -15,7 +15,14 @@ import re
 import time
 from typing import Any, Callable
 
-from bankops.artifact.models import ActionType, Artifact, ParamType, Step
+from bankops.artifact.models import (
+    ActionType,
+    Artifact,
+    OutcomeClass,
+    OutcomeSignature,
+    ParamType,
+    Step,
+)
 from bankops.perception.base import Observation, PerceptionAdapter
 from bankops.replay.results import (
     BusinessOutcomeResult,
@@ -117,18 +124,56 @@ class ReplayEngine:
             steps_executed += 1
 
             # §4e: verify the per-step checkpoint before moving on — never
-            # assume the click worked.
+            # assume the click worked. When it doesn't match, check the
+            # step's recorded alternate-outcome signatures (§7a) before
+            # falling back to a hard failure.
             if step.checkpoint is not None:
                 observation = self.adapter.observe()
                 if not self._checkpoint_matches(step.checkpoint, observation):
-                    return FailureResult(
-                        artifact_name=artifact.name,
-                        steps_executed=steps_executed - 1,
-                        reason="checkpoint_mismatch",
-                        failed_step=index,
-                        expected=self._checkpoint_str(step),
-                        observed=self._observation_str(observation),
-                    )
+                    match = self._match_outcome_signature(step)
+                    if match is not None:
+                        signature, matched_text = match
+                        if (
+                            signature.classification
+                            is OutcomeClass.BUSINESS_OUTCOME
+                        ):
+                            # §7b: a business outcome short-circuits the run
+                            # immediately with its own result type.
+                            return BusinessOutcomeResult(
+                                artifact_name=artifact.name,
+                                steps_executed=steps_executed,
+                                step_index=index,
+                                classification=signature.classification,
+                                description=signature.description,
+                                matched_text=matched_text,
+                                outputs=outputs,
+                            )
+                        if signature.classification is OutcomeClass.HARD_FAILURE:
+                            return FailureResult(
+                                artifact_name=artifact.name,
+                                steps_executed=steps_executed - 1,
+                                reason="recorded_hard_failure",
+                                failed_step=index,
+                                expected=(
+                                    f"signature {signature.text_pattern!r} "
+                                    f"({signature.description or 'no description'})"
+                                ),
+                                observed=matched_text,
+                            )
+                        # RECOVERABLE (§7b): handled inline — the recorded
+                        # signature says the flow proceeds from this state,
+                        # so the run continues to the next step. Full
+                        # automatic recovery procedures are a documented
+                        # future upgrade, not silently assumed here.
+                    else:
+                        return FailureResult(
+                            artifact_name=artifact.name,
+                            steps_executed=steps_executed - 1,
+                            reason="checkpoint_mismatch",
+                            failed_step=index,
+                            expected=self._checkpoint_str(step),
+                            observed=self._observation_str(observation),
+                        )
 
         # The deliberate terminal checkpoint (§4e).
         observation = self.adapter.observe()
@@ -217,6 +262,28 @@ class ReplayEngine:
                     f"matched {count} elements"
                 )
         raise ElementNotResolved(step, index, detail)
+
+    def _match_outcome_signature(
+        self, step: Step
+    ) -> tuple[OutcomeSignature, str] | None:
+        """Check a step's recorded alternate-outcome signatures (§7a)
+        against the live page: locator resolves AND text pattern matches.
+        Returns the first match, or None when nothing matches — the caller
+        then falls back to a hard failure."""
+        for signature in step.outcome_signatures:
+            try:
+                locator = self.adapter.resolve_locator(signature.locator)
+                if locator.count() < 1:
+                    continue
+                try:
+                    text = str(locator.input_value())
+                except Exception:
+                    text = locator.inner_text()
+            except Exception:
+                continue
+            if re.search(signature.text_pattern, text, re.IGNORECASE):
+                return signature, text
+        return None
 
     # -- Param validation (§6c) ---------------------------------------------------
 
