@@ -70,3 +70,52 @@ def redact_params(params: dict[str, Any]) -> dict[str, Any]:
         key: mask(value) if is_sensitive_name(key) else value
         for key, value in params.items()
     }
+
+
+def redact_action(
+    action: str,
+    params: dict[str, Any],
+    element_name: str = "",
+    data: Any = None,
+) -> tuple[dict[str, Any], Any]:
+    """Redact a typed action's parameters and result data for persistence
+    (§8c). Three name-based rules, in order:
+
+    1. by declared parameter name (``password=…`` masked directly),
+    2. by the target element's accessible name — typing into a field
+       labelled "Password" masks the ``text``/``option``/``value`` params
+       and the returned ``data``, even though the live value was used
+       in-session to perform the action,
+    3. for ``remember`` stores, the *key* names the fact: remembering
+       'password' masks the stored value.
+    """
+    redacted = {
+        key: mask(value) if is_sensitive_name(key) else value
+        for key, value in params.items()
+    }
+    if element_name and is_sensitive_name(element_name):
+        for key in ("text", "option", "value"):
+            if key in redacted:
+                redacted[key] = mask(redacted[key])
+        if data is not None:
+            data = mask(data)
+    if action == "remember" and "key" in redacted:
+        if is_sensitive_name(str(redacted.get("key", ""))):
+            if "value" in redacted:
+                redacted["value"] = mask(redacted["value"])
+            if data is not None:
+                data = mask(data)
+    return redacted, data
+
+
+def redact_nested(obj: Any) -> Any:
+    """Recursively mask sensitive-named keys in nested dicts/lists —
+    used for evidence summaries that embed working memory, etc."""
+    if isinstance(obj, dict):
+        return {
+            key: mask(value) if is_sensitive_name(key) else redact_nested(value)
+            for key, value in obj.items()
+        }
+    if isinstance(obj, list):
+        return [redact_nested(item) for item in obj]
+    return obj

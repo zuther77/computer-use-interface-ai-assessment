@@ -159,12 +159,14 @@ class DiscoveryLoop:
         *,
         max_steps: int | None = None,
         no_progress_limit: int = 3,
+        step_logger=None,
     ) -> None:
         self.client = client
         self.ctx = ctx
         self.max_steps = max_steps if max_steps is not None else settings.MAX_STEPS
         self.no_progress_limit = no_progress_limit
         self.action_log: list[ActionLogEntry] = []
+        self.step_logger = step_logger
 
     # -- Structured state → messages (§3c) ----------------------------------
 
@@ -269,6 +271,23 @@ class DiscoveryLoop:
                         ),
                     )
                 )
+                if self.step_logger is not None:
+                    # Evidence wiring (§10a/§8c): redaction happens inside
+                    # the writer, before the line is written.
+                    self.step_logger.log_step(
+                        step=step,
+                        action=call.name,
+                        status=result.status.value,
+                        params=dict(call.params),
+                        message=result.message,
+                        data=result.data,
+                        element_name=element.name if element else "",
+                        url=post_observation.url,
+                        observation_summary=(
+                            f"{post_observation.page_identity} "
+                            f"({post_observation.title})"
+                        ),
+                    )
                 if call.name in _PAGE_AFFECTING:
                     page_affecting_attempt = True
                 if result.status is ToolStatus.FINISHED:

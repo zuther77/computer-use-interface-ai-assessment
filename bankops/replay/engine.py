@@ -18,6 +18,7 @@ from typing import Any, Callable
 from bankops.artifact.models import (
     ActionType,
     Artifact,
+    LocatorCandidate,
     OutcomeClass,
     OutcomeSignature,
     ParamType,
@@ -34,6 +35,7 @@ from bankops.safety.allowlist import Allowlist
 from bankops.safety.risk import ConfirmationRequired, check_confirmation
 
 _JSESSIONID = re.compile(r";jsessionid=[^?]*")
+
 
 def normalize_url(url: str) -> str:
     """ParaBank decorates URLs with ;jsessionid=... — strip for compare."""
@@ -81,10 +83,12 @@ class ReplayEngine:
         *,
         allowlist: Allowlist | None = None,
         retry_delays: tuple[float, ...] = (0.0, 1.0, 3.0),
+        step_logger=None,
     ):
         self.adapter = adapter
         self.allowlist = allowlist
         self.retry_delays = retry_delays
+        self.step_logger = step_logger
 
     # -- Public entry point ---------------------------------------------------
 
@@ -119,9 +123,16 @@ class ReplayEngine:
                     observed="invoked without confirm=True",
                 )
 
+            applied = self._log_params(step, validated)
             try:
-                self._execute_step(artifact, step, index, validated, outputs)
+                candidate = self._execute_step(artifact, step, index, validated, outputs)
             except ElementNotResolved as exc:
+                self._log(
+                    index, step, "failure",
+                    message=str(exc),
+                    params=applied,
+                    classification="element_not_found",
+                )
                 observed = self._observed_state()
                 return FailureResult(
                     artifact_name=artifact.name,
@@ -140,6 +151,14 @@ class ReplayEngine:
                 )
 
             steps_executed += 1
+            self._log(
+                index,
+                step,
+                "success",
+                params=applied,
+                data=outputs.get(step.output_name) if step.output_name else None,
+                strategy=candidate.strategy.value if candidate else None,
+            )
 
             # §4e: verify the per-step checkpoint before moving on — never
             # assume the click worked. When it doesn't match, check the
@@ -155,6 +174,13 @@ class ReplayEngine:
                             signature.classification
                             is OutcomeClass.BUSINESS_OUTCOME
                         ):
+                            self._log(
+                                index,
+                                step,
+                                "business_outcome",
+                                message=matched_text,
+                                classification="business_outcome",
+                            )
                             # §7b: a business outcome short-circuits the run
                             # immediately with its own result type.
                             return BusinessOutcomeResult(
@@ -167,6 +193,13 @@ class ReplayEngine:
                                 outputs=outputs,
                             )
                         if signature.classification is OutcomeClass.HARD_FAILURE:
+                            self._log(
+                                index,
+                                step,
+                                "failure",
+                                message=matched_text,
+                                classification="recorded_hard_failure",
+                            )
                             return FailureResult(
                                 artifact_name=artifact.name,
                                 steps_executed=steps_executed - 1,
@@ -183,7 +216,25 @@ class ReplayEngine:
                         # so the run continues to the next step. Full
                         # automatic recovery procedures are a documented
                         # future upgrade, not silently assumed here.
+                        self._log(
+                            index,
+                            step,
+                            "recoverable",
+                            message=matched_text,
+                            classification="recoverable_continued",
+                        )
                     else:
+                        self._log(
+                            index,
+                            step,
+                            "failure",
+                            message=(
+                                f"checkpoint mismatch: expected "
+                                f"{self._checkpoint_str(step)}, observed "
+                                f"{self._observation_str(observation)}"
+                            ),
+                            classification="checkpoint_mismatch",
+                        )
                         return FailureResult(
                             artifact_name=artifact.name,
                             steps_executed=steps_executed - 1,
@@ -196,6 +247,17 @@ class ReplayEngine:
         # The deliberate terminal checkpoint (§4e).
         observation = self.adapter.observe()
         if not self._checkpoint_matches(artifact.terminal_checkpoint, observation):
+            self._log(
+                len(artifact.steps) - 1,
+                Step(action=ActionType.CLICK, locator_candidates=[]),
+                "failure",
+                message=(
+                    f"terminal checkpoint mismatch: expected "
+                    f"{self._checkpoint_str_of(artifact.terminal_checkpoint)}, "
+                    f"observed {self._observation_str(observation)}"
+                ),
+                classification="terminal_checkpoint_mismatch",
+            )
             return FailureResult(
                 artifact_name=artifact.name,
                 steps_executed=steps_executed,
@@ -220,26 +282,29 @@ class ReplayEngine:
         index: int,
         validated: dict[str, str],
         outputs: dict[str, str],
-    ) -> None:
+    ) -> LocatorCandidate | None:
+        """Execute one step; return the candidate locator that resolved it
+        (None for navigate), so evidence logging records which strategy
+        tier won (§10a/§11b)."""
         action = step.action
         if action is ActionType.NAVIGATE:
             url = step.navigate_url or ""
             if self.allowlist is not None:
                 self.allowlist.check_navigate(url)
             self.adapter.navigate(url)
-            return
+            return None
         if action is ActionType.EXTRACT:
-            _, locator = self._resolve(step, index)
+            candidate, locator = self._resolve(step, index)
             try:
                 value = str(locator.input_value())
             except Exception:
                 value = locator.inner_text()
             if step.output_name:
                 outputs[step.output_name] = value
-            return
+            return candidate
 
         # click / type_text / select_option all need a resolved element.
-        _, locator = self._resolve(step, index)
+        candidate, locator = self._resolve(step, index)
         if action is ActionType.CLICK:
             locator.click()
         elif action is ActionType.TYPE_TEXT:
@@ -252,12 +317,55 @@ class ReplayEngine:
                 locator.select_option(label=option)
         else:  # pragma: no cover — ActionType is closed
             raise ValueError(f"unsupported replay action: {action}")
+        return candidate
 
     @staticmethod
     def _step_value(step: Step, validated: dict[str, str]) -> str:
         if step.is_constant:
             return step.value or ""
         return validated[step.input_name or ""]
+
+    # -- Evidence logging (§10a) ------------------------------------------------
+
+    @staticmethod
+    def _log_params(step: Step, validated: dict[str, str]) -> dict[str, str]:
+        """The values a step actually applied — what the evidence log
+        records (and the redaction writer masks when the input/output name
+        is sensitive, §8c)."""
+        if step.action is ActionType.NAVIGATE:
+            return {"url": step.navigate_url or ""}
+        if step.is_constant:
+            return {"value": step.value or ""}
+        if step.input_name:
+            return {"value": validated.get(step.input_name, "")}
+        return {}
+
+    def _log(
+        self,
+        index: int,
+        step: Step,
+        status: str,
+        *,
+        message: str = "",
+        params: dict[str, str] | None = None,
+        data: str | None = None,
+        strategy: str | None = None,
+        classification: str | None = None,
+    ) -> None:
+        if self.step_logger is None:
+            return
+        self.step_logger.log_step(
+            step=index,
+            action=step.action.value,
+            status=status,
+            params=params or {},
+            message=message,
+            data=data,
+            element_name=step.input_name or step.output_name or "",
+            locator_strategy=strategy,
+            url=self.adapter.current_url(),
+            result_classification=classification,
+        )
 
     def _resolve(self, step: Step, index: int):
         """§6a: candidates in priority order, stop at the first unique
