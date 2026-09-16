@@ -322,3 +322,103 @@ class TestResultUnion:
         assert isinstance(rolled, SuccessResult)
         assert rolled.steps_executed == 5
         assert rolled.outputs == {"x": "1", "y": "2"}
+
+
+class _TransientAdapter:
+    """A surface whose page settles: early observations show the transient
+    pre-render identity (title fallback — no heading), later ones the
+    settled heading — mirroring ParaBank's async (JMS) account-data
+    rendering that instant post-action replay checks must wait out (§6b)."""
+
+    def __init__(self, *, settle: bool = True):
+        from bankops.perception.base import Observation, ObservedElement
+
+        def obs(identity: str) -> Observation:
+            return Observation(
+                url="http://localhost:8080/parabank/overview.htm",
+                title="ParaBank | Accounts Overview",
+                page_identity=identity,
+                elements=[
+                    ObservedElement(
+                        index=0, tag="a", role="link", name="Log Out",
+                        locators=[],
+                    )
+                ],
+            )
+
+        self._settled = obs("Account Services")
+        self._transient = obs("ParaBank | Accounts Overview")
+        self._transients_left = 2 if settle else 10**9
+
+    def observe(self):
+        if self._transients_left > 0:
+            self._transients_left -= 1
+            return self._transient
+        return self._settled
+
+    def capture_screenshot(self, path):
+        from pathlib import Path
+
+        return Path(path)
+
+    def resolve_locator(self, candidate):
+        raise RuntimeError("not needed")
+
+    def navigate(self, url):
+        return 200
+
+    def current_url(self):
+        return "http://localhost:8080/parabank/overview.htm"
+
+    def close(self):
+        pass
+
+
+class TestCheckpointSettleRetry:
+    def _artifact(self):
+        from bankops.artifact.models import (
+            ActionType,
+            Artifact,
+            Checkpoint,
+            RiskLevel,
+            Step,
+        )
+
+        checkpoint = Checkpoint(
+            url="http://localhost:8080/parabank/overview.htm",
+            page_identity="Account Services",
+        )
+        return Artifact(
+            name="settle_test",
+            goal="log in",
+            steps=[
+                Step(
+                    action=ActionType.NAVIGATE,
+                    navigate_url="http://localhost:8080/parabank/overview.htm",
+                    checkpoint=checkpoint,
+                )
+            ],
+            terminal_checkpoint=checkpoint,
+            risk_level=RiskLevel.READ_ONLY,
+        )
+
+    def test_checkpoint_waits_out_transient_page_state(self) -> None:
+        """Regression (observed live): ParaBank's overview page transiently
+        lacks its identity heading right after login (async JMS render);
+        replay must re-observe with backoff instead of failing."""
+        from bankops.replay.engine import ReplayEngine
+
+        engine = ReplayEngine(_TransientAdapter(), retry_delays=(0.0, 0.0, 0.0))
+        result = engine.execute(self._artifact(), {})
+        assert result.status == "success"
+
+    def test_never_settling_checkpoint_still_fails_typed(self) -> None:
+        from bankops.replay.engine import ReplayEngine
+
+        engine = ReplayEngine(
+            _TransientAdapter(settle=False), retry_delays=(0.0, 0.0, 0.0)
+        )
+        result = engine.execute(self._artifact(), {})
+        assert result.status == "failure"
+        assert result.reason == "checkpoint_mismatch"
+        assert "Account Services" in result.expected

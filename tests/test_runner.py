@@ -217,3 +217,42 @@ class TestRunReplay:
         assert (tmp_path / "replay_error_r2").is_dir()
         assert (tmp_path / "replay_error_r2" / "steps.jsonl").exists()
         assert not (tmp_path / "replay_success_r2").exists()
+
+
+class _CrashingLLM:
+    """Remembers once, then dies — simulates an LLM outage mid-run."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def decide(self, messages, tools=None):
+        self.calls += 1
+        if self.calls == 1:
+            return [
+                ToolCall(id="1", name="remember", params={"key": "k", "value": "v"})
+            ]
+        raise RuntimeError("simulated LLM outage")
+
+
+class TestCrashEvidenceDurability:
+    def test_crash_still_writes_summary_and_screenshot(self, tmp_path) -> None:
+        """Regression: a mid-run crash must still leave the run's summary
+        and final screenshot behind (§10a/§10b), then propagate."""
+        import json
+
+        with pytest.raises(RuntimeError):
+            run_discovery(
+                "demo goal",
+                artifact_name="crash_test",
+                adapter=FakeAdapter(),
+                client=_CrashingLLM(),
+                allowlist=permissive_allowlist(),
+                evidence_dir=tmp_path,
+                max_steps=10,
+            )
+        run_dirs = list(tmp_path.glob("discovery_run_*"))
+        assert len(run_dirs) == 1
+        summary = json.loads((run_dirs[0] / "summary.json").read_text())
+        assert summary["status"] == "crashed"
+        assert "simulated LLM outage" in summary["reason"]
+        assert (run_dirs[0] / "final.png").exists()

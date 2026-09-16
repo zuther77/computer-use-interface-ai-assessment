@@ -165,7 +165,14 @@ class ReplayEngine:
             # step's recorded alternate-outcome signatures (§7a) before
             # falling back to a hard failure.
             if step.checkpoint is not None:
-                observation = self.adapter.observe()
+                # §6b tiered wait: async-rendered pages (ParaBank renders
+                # account data via JMS with a delay) transiently lack the
+                # page-identity heading, so the instant post-action
+                # observation can fall back to the title. Re-observe with
+                # backoff before declaring a mismatch.
+                observation = self._await_checkpoint(step.checkpoint)
+                if observation is None:
+                    observation = self.adapter.observe()
                 if not self._checkpoint_matches(step.checkpoint, observation):
                     match = self._match_outcome_signature(step)
                     if match is not None:
@@ -244,8 +251,11 @@ class ReplayEngine:
                             observed=self._observation_str(observation),
                         )
 
-        # The deliberate terminal checkpoint (§4e).
-        observation = self.adapter.observe()
+        # The deliberate terminal checkpoint (§4e) — with the same §6b
+        # tiered wait for async-rendered pages.
+        observation = self._await_checkpoint(artifact.terminal_checkpoint)
+        if observation is None:
+            observation = self.adapter.observe()
         if not self._checkpoint_matches(artifact.terminal_checkpoint, observation):
             self._log(
                 len(artifact.steps) - 1,
@@ -486,6 +496,22 @@ class ReplayEngine:
         )
 
     # -- Checkpoints (§4e) --------------------------------------------------------
+
+    def _await_checkpoint(self, checkpoint) -> Observation | None:
+        """§6b tiered waiting for checkpoint verification: async-rendered
+        pages (ParaBank renders account data via JMS with a delay)
+        transiently lack the page-identity heading, so the observation
+        immediately after an action can fall back to the page title and
+        fail to match a checkpoint recorded in the settled state.
+        Re-observe with backoff; return the matching observation, or None
+        when the checkpoint never settles."""
+        for delay in self.retry_delays:
+            if delay:
+                time.sleep(delay)
+            observation = self.adapter.observe()
+            if self._checkpoint_matches(checkpoint, observation):
+                return observation
+        return None
 
     def _observed_state(self) -> str:
         try:

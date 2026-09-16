@@ -69,8 +69,13 @@ _OBSERVE_JS = r"""
     }
     const wrapLabel = el.closest('label');
     if (wrapLabel) return norm(wrapLabel.textContent);
-    const text = norm(el.textContent);
-    if (text) return text;
+    // A select's own text is its options and a textarea's is its value —
+    // neither is a field label; skip both (they fall through to the
+    // legacy-label fallback below instead of producing option-soup names).
+    if (el.tagName !== 'SELECT' && el.tagName !== 'TEXTAREA') {
+      const text = norm(el.textContent);
+      if (text) return text;
+    }
     const title = el.getAttribute('title');
     if (title) return norm(title);
     if (el.tagName === 'INPUT') {
@@ -81,6 +86,40 @@ _OBSERVE_JS = r"""
       }
       const placeholder = el.getAttribute('placeholder');
       if (placeholder) return norm(placeholder);
+    }
+    // Legacy-layout label fallback (§11a "table layouts", generalized
+    // after probing live ParaBank): fields are labelled by plain text
+    // before them — a label-like *first* previous element sibling
+    // (<b>Amount:</b> $<input>, <tr><td>Amount</td><td><input>, or the
+    // <p> above a login div), or a bare lettered text node in the same
+    // container (<div>From account #<select>). Deliberately conservative:
+    // candidate labels must not contain a form control (a wrapping
+    // <label> around another input is that input's label, not ours),
+    // only the immediately preceding contiguous text is considered (no
+    // chain-walking past elements into unrelated text), and the text
+    // must contain letters (skips "$" prefixes and whitespace).
+    const LABELLIKE = ['P','B','STRONG','LABEL','TH','TD','DT','LEGEND','SPAN','EM','I','SMALL'];
+    const isLabelFor = (cand) => (
+      LABELLIKE.includes(cand.tagName) &&
+      !cand.querySelector('input, select, textarea, button') &&
+      cand.textContent.length < 80
+    );
+    if (['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName)) {
+      let node = el;
+      for (let i = 0; i < 4 && node && node.parentElement; i++) {
+        let sib = node.previousSibling;
+        while (sib && sib.nodeType === 3) {
+          const t = norm(sib.textContent);
+          if (t) {
+            if (/[a-zA-Z]/.test(t) && t.length < 80) return t;
+            break; // "$" or similar decoration — stop, try the element path
+          }
+          sib = sib.previousSibling;
+        }
+        const prev = node.previousElementSibling;
+        if (prev && isLabelFor(prev)) return norm(prev.textContent);
+        node = node.parentElement;
+      }
     }
     return '';
   };
@@ -118,6 +157,8 @@ _OBSERVE_JS = r"""
         name: nameFor(el),
         value: (el.value !== undefined && el.value !== null && el.value !== '')
           ? String(el.value) : null,
+        options: (tag === 'select')
+          ? Array.from(el.options).slice(0, 12).map((o) => o.value) : null,
         id: el.id || null,
         nameAttr: nameAttr,
         text: norm(el.textContent).slice(0, 120) || null,
@@ -202,6 +243,7 @@ class PlaywrightPerceptionAdapter(PerceptionAdapter):
                     role=el["role"],
                     name=el["name"],
                     value=el["value"],
+                    options=el.get("options"),
                     locators=locators,
                 )
             )
@@ -242,8 +284,12 @@ class PlaywrightPerceptionAdapter(PerceptionAdapter):
     def current_url(self) -> str:
         return self.page.url
 
-    def navigate(self, url: str) -> None:
-        self.page.goto(url)
+    def navigate(self, url: str) -> int | None:
+        """Navigate and report the HTTP status (None when unavailable) —
+        the navigate tool turns error-page landings (≥400) into typed
+        errors instead of silently operating on a 404 page."""
+        response = self.page.goto(url)
+        return response.status if response else None
 
     def close(self) -> None:
         try:

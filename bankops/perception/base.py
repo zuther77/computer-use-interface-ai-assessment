@@ -36,6 +36,7 @@ class ObservedElement(BaseModel):
     role: str
     name: str = ""
     value: str | None = None
+    options: list[str] | None = None
     locators: list[LocatorCandidate] = Field(default_factory=list)
 
 
@@ -58,6 +59,8 @@ class Observation(BaseModel):
                 line += f' "{element.name}"'
             if element.value:
                 line += f' (value: "{element.value}")'
+            if element.options:
+                line += f" (options: {', '.join(element.options)})"
             lines.append(line)
         return "\n".join(lines)
 

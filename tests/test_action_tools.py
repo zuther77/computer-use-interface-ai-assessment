@@ -179,3 +179,98 @@ class TestErrorHandling:
         result = dispatch(ctx, "remember", {"key": "k", "value": "v"})
         assert result.status is ToolStatus.SUCCESS
         assert ctx.memory == {"k": "v"}
+
+
+class _ExplodingLocator:
+    def count(self) -> int:
+        return 1
+
+    def fill(self, text: str) -> None:
+        raise RuntimeError("simulated Playwright timeout")
+
+
+class _StubAdapter:
+    """Minimal surface whose only element resolves to a locator that fails
+    on fill — used to prove surface-level action failures are typed
+    errors, not crashes (§3d)."""
+
+    def __init__(self):
+        from bankops.artifact.models import (
+            LocatorCandidate,
+            LocatorStrategy,
+        )
+        from bankops.perception.base import Observation, ObservedElement
+
+        self._observation = Observation(
+            url="http://localhost:8080/parabank/transfer.htm",
+            title="ParaBank | Transfer Funds",
+            page_identity="Transfer Funds",
+            elements=[
+                ObservedElement(
+                    index=0,
+                    tag="input",
+                    role="textbox",
+                    name="Amount",
+                    locators=[
+                        LocatorCandidate(
+                            strategy=LocatorStrategy.ID_ATTRIBUTE,
+                            value="#amount",
+                        )
+                    ],
+                )
+            ],
+        )
+
+    def observe(self):
+        return self._observation
+
+    def capture_screenshot(self, path):
+        return Path(path)
+
+    def resolve_locator(self, candidate):
+        return _ExplodingLocator()
+
+    def navigate(self, url: str) -> None: ...
+
+    def current_url(self) -> str:
+        return self._observation.url
+
+
+class TestOperationalFailureHandling:
+    def test_playwright_timeout_becomes_typed_error_not_crash(self) -> None:
+        """Regression: a Playwright timeout mid-action (element went
+        hidden after its observation) must not kill the run."""
+        ctx = ToolContext(adapter=_StubAdapter(), allowlist=make_allowlist())
+        ctx.refresh_observation()
+        result = dispatch(ctx, "type_text", {"index": 0, "text": "25.00"})
+        assert result.status is ToolStatus.ERROR
+        assert "action failed" in result.message
+        assert "simulated Playwright timeout" in result.message
+
+    def test_allowlist_violation_still_raises_through_dispatch(self) -> None:
+        """The catch-all must never swallow policy violations (§8a)."""
+        ctx = ToolContext(
+            adapter=_StubAdapter(),
+            allowlist=make_allowlist(action_types={"type_text": "deny"}),
+        )
+        ctx.refresh_observation()
+        with pytest.raises(AllowlistViolation):
+            dispatch(ctx, "type_text", {"index": 0, "text": "25.00"})
+
+
+class TestNavigateErrorPages:
+    def test_http_error_navigation_is_a_typed_error(self) -> None:
+        """Regression: navigating onto a 404/error page must come back as
+        a typed ERROR (the page state is empty — operating on it silently
+        is how discovery runs die in bounce loops)."""
+
+        class _NotFoundAdapter(_StubAdapter):
+            def navigate(self, url: str):
+                return 404
+
+        ctx = ToolContext(adapter=_NotFoundAdapter(), allowlist=make_allowlist())
+        result = dispatch(
+            ctx, "navigate", {"url": "http://localhost:8080/parabank/nowhere.htm"}
+        )
+        assert result.status is ToolStatus.ERROR
+        assert "HTTP 404" in result.message

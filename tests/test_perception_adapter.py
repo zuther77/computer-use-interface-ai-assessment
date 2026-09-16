@@ -179,3 +179,48 @@ class TestRender:
         assert "[6] combobox \"Account\"" in rendered
         assert "<html" not in rendered  # never raw markup
         assert observation.observation_hash
+
+
+class TestLegacyTableLayouts:
+    """ParaBank-style legacy pages: the field label is plain text in a
+    preceding table cell, with no <label> element at all (§11a's "table
+    layouts"). Without this fallback every ParaBank form field is
+    nameless, degrading LLM guidance, artifact input names, and
+    redaction's descriptive-name assumption (§8c)."""
+
+    def test_table_cell_text_becomes_accessible_name(self, adapter) -> None:
+        # Reuse the module fixture's page/browser — Playwright forbids a
+        # second sync_playwright() instance in the same thread. The
+        # module-scoped `observation` fixture is already cached by earlier
+        # tests, so temporarily swapping the page content is safe; we
+        # restore the fixture page afterwards regardless.
+        page = adapter.page
+        page.set_content(
+            "<html><body><h2>Transfer Funds</h2>"
+            "<form><p><b>Username</b></p>"
+            "<div class='login'><input name='username'></div>"
+            "<p><b>Amount:</b> $<input id='amount'></p>"
+            "<div>From account #<select id='from'><option>12345</option></select></div>"
+            "<table><tr><td>To account</td><td><select id='to'></select></td></tr>"
+            "</table></form></body></html>"
+        )
+        try:
+            observation = adapter.observe()
+            names = {(e.role, e.name) for e in observation.elements}
+            # Real ParaBank patterns, verified by live DOM probes:
+            assert ("textbox", "Username") in names      # <p><b> above a login div
+            assert ("textbox", "Amount:") in names      # <b> sibling, "$" text skipped
+            assert ("combobox", "From account #") in names  # bare text node label
+            assert ("combobox", "To account") in names  # table-cell label
+            # Selects must never name themselves from their option text:
+            assert all("12345" not in n for _, n in names)
+            # Combobox options are exposed in the observation — the only
+            # channel through which the agent can see what a dropdown
+            # offers (e.g. the second account to transfer to):
+            from_select = next(
+                e for e in observation.elements if e.name == "From account #"
+            )
+            assert from_select.options == ["12345"]
+            assert "(options: 12345)" in observation.render()
+        finally:
+            page.goto(FIXTURE.as_uri())

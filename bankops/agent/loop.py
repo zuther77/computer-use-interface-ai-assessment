@@ -47,11 +47,15 @@ SYSTEM_PROMPT = (
     "You are a web-automation agent operating a banking application through "
     "typed tools. You are shown an indexed list of the current page's "
     "interactive elements; act on them strictly by index. Take exactly one "
-    "action per step. Use `extract` specifically for information the goal "
+    "action per step. Complete each page of the goal in one visit: fill "
+    "every required field and submit the form before navigating elsewhere. "
+    "Use `extract` specifically for information the goal "
     "asked you to retrieve, and `remember` for facts you will need in later "
     "steps. Never invent element indexes that are not in the current "
     "observation, and never attempt to bypass the navigation/action "
     "allowlist — if an action is blocked, choose a different approach. "
+    "Type monetary amounts as plain numbers without currency symbols "
+    "(for example 25.00, not $25.00). "
     "When the goal is achieved, call `finish` with a summary; if you truly "
     "cannot proceed, call `report_stuck` with the reason."
 )
@@ -190,6 +194,16 @@ class DiscoveryLoop:
             f"CURRENT PAGE:\n{observation.render()}\n\n"
             "Choose exactly one next action as a single tool call."
         )
+        # A no-tool-call response is an error the model must correct in the
+        # *current* turn — repeat the requirement explicitly here, not only
+        # in the history summary (§3d: ending a run is a typed tool call).
+        if self.action_log and self.action_log[-1].action == "(none)":
+            content += (
+                "\n\nREMINDER: your previous response contained no tool call. "
+                "Respond now with exactly one tool call — finish(summary) "
+                "if the goal is achieved, report_stuck(reason) if you "
+                "cannot proceed."
+            )
         return [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": content},
@@ -201,32 +215,91 @@ class DiscoveryLoop:
         self._goal = goal
         self.ctx.refresh_observation()
         consecutive_stale = 0
+        # Bounded tool-calling cadence (§3c-compliant): only the *previous*
+        # step's tool call + result is repeated as proper assistant/tool
+        # messages. Constant size per request — never transcript replay.
+        # Without it, requests are bare [system, user] pairs and models
+        # drift into content-only responses at completion (no finish call).
+        last_exchange: list[dict[str, Any]] = []
+        # Duplicate-action guard state: the immediately preceding executed
+        # action. Repeating the *exact* same call right after it succeeded
+        # is a model derpage (observed live: re-typing the same amount four
+        # steps in a row), not a legitimate retry — it is rejected with a
+        # corrective typed error. Retries after a *failed* action stay
+        # allowed, and non-adjacent repeats (e.g. navigating back and
+        # clicking the same link again later) are unaffected.
+        prev_signature: tuple[str, str] | None = None
+        prev_status: str = ""
 
         for step in range(1, self.max_steps + 1):
             step_start_hash = self.ctx.observation.observation_hash
-            calls = self.client.decide(self._build_messages(goal))
+            messages = self._build_messages(goal) + last_exchange
+            calls = self.client.decide(messages)
 
             if not calls:
+                last_exchange = []  # cadence broken — do not replay it
+                # The reminder rides into the action history, which the
+                # next prompt renders — an explicit corrective signal for
+                # models that end runs without calling finish (§3d).
+                reminder = (
+                    "model returned no tool call — you must respond with "
+                    "exactly one tool call; if the goal is now achieved, "
+                    "call finish with a summary; if you cannot proceed, "
+                    "call report_stuck with the reason"
+                )
                 self.action_log.append(
                     ActionLogEntry(
                         step=step,
                         action="(none)",
                         params={},
                         status="error",
-                        message="model returned no tool call",
+                        message=reminder,
                         url=self.ctx.adapter.current_url(),
                         page_title=self.ctx.observation.title,
                         page_identity=self.ctx.observation.page_identity,
                         observation_hash=step_start_hash,
                     )
                 )
+                if self.step_logger is not None:
+                    # §10a: one JSONL line per step — no-call steps too.
+                    self.step_logger.log_step(
+                        step=step,
+                        action="(none)",
+                        status="error",
+                        params={},
+                        message=reminder,
+                        data=None,
+                        element_name="",
+                        url=self.ctx.adapter.current_url(),
+                        observation_summary=(
+                            f"{self.ctx.observation.page_identity} "
+                            f"({self.ctx.observation.title})"
+                        ),
+                    )
                 consecutive_stale += 1
                 if consecutive_stale >= self.no_progress_limit:
                     return self._result(RunStatus.NO_PROGRESS, "model repeatedly returned no tool call")
                 continue
 
             page_affecting_attempt = False
-            for call in calls:
+            step_exchange: list[dict[str, Any]] = [
+                {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": call.id or f"call_{step}_{i}",
+                            "type": "function",
+                            "function": {
+                                "name": call.name,
+                                "arguments": json.dumps(call.params),
+                            },
+                        }
+                        for i, call in enumerate(calls)
+                    ],
+                }
+            ]
+            for call_position, call in enumerate(calls):
                 # Capture the acted-on element from the *pre-action*
                 # observation (§3a) — its name and candidate locators are
                 # what the recorder later turns into artifact steps (§4b/§4c).
@@ -237,18 +310,42 @@ class DiscoveryLoop:
                     if isinstance(index, int)
                     else None
                 )
-                try:
-                    result = dispatch(self.ctx, call.name, call.params)
-                except AllowlistViolation as exc:
-                    # The action never executes (enforced), but the run
-                    # continues: the blocked attempt is recorded as a typed
-                    # error so the model can correct course.
+                signature = (
+                    call.name,
+                    json.dumps(call.params, sort_keys=True),
+                )
+                if prev_signature == signature and prev_status == "success":
                     result = ToolResult(
                         action=call.name,
                         status=ToolStatus.ERROR,
-                        message=f"blocked by allowlist: {exc}",
+                        message=(
+                            f"duplicate action: '{call.name}({call.params})' "
+                            f"just succeeded — do not repeat it; choose a "
+                            f"different next action"
+                        ),
                     )
+                else:
+                    try:
+                        result = dispatch(self.ctx, call.name, call.params)
+                    except AllowlistViolation as exc:
+                        # The action never executes (enforced), but the run
+                        # continues: the blocked attempt is recorded as a
+                        # typed error so the model can correct course.
+                        result = ToolResult(
+                            action=call.name,
+                            status=ToolStatus.ERROR,
+                            message=f"blocked by allowlist: {exc}",
+                        )
+                prev_signature, prev_status = signature, result.status.value
                 post_observation = self.ctx.refresh_observation()
+                step_exchange.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call.id
+                        or f"call_{step}_{call_position}",
+                        "content": f"{result.status.value}: {result.message}"[:400],
+                    }
+                )
                 self.action_log.append(
                     ActionLogEntry(
                         step=step,
@@ -294,6 +391,8 @@ class DiscoveryLoop:
                     return self._result(RunStatus.COMPLETED, result.message)
                 if result.status is ToolStatus.STUCK:
                     return self._result(RunStatus.STUCK, result.message)
+
+            last_exchange = step_exchange
 
             # No-progress detection (§3d): a page-affecting action whose
             # post-action observation hash is identical, N steps in a row.

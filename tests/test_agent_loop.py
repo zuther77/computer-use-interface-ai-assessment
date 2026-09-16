@@ -245,3 +245,111 @@ class TestStructuredState:
         blocked = result.action_log[0]
         assert blocked.status == "error"
         assert "blocked by allowlist" in blocked.message
+
+
+class TestNoCallStepLogging:
+    def test_no_call_steps_are_logged_to_evidence(self, tmp_path) -> None:
+        """Regression: steps where the model returned no tool call must
+        still produce their JSONL line (§10a — one line per step)."""
+        import json
+
+        from bankops.evidence.logger import StepLogger
+
+        ctx = make_ctx([make_observation()])
+        logger = StepLogger(tmp_path, run_id="logtest", run_kind="discovery")
+        llm = ScriptedLLM(
+            [
+                [],
+                [ToolCall(id="1", name="finish", params={"summary": "done"})],
+            ]
+        )
+        DiscoveryLoop(llm, ctx, max_steps=5, step_logger=logger).run("goal")
+        lines = (tmp_path / "steps.jsonl").read_text().strip().splitlines()
+        assert len(lines) == 2
+        first = json.loads(lines[0])
+        assert first["action"] == "(none)"
+        assert first["status"] == "error"
+        second = json.loads(lines[1])
+        assert second["action"] == "finish"
+
+
+class TestToolCallCadence:
+    """§3c-compliant bounded cadence: the previous step's tool call and
+    result ride as proper assistant/tool messages so the model stays in a
+    tool-calling rhythm instead of drifting into content-only responses
+    at completion. Constant size per request — never transcript replay."""
+
+    def test_previous_exchange_rides_as_assistant_tool_messages(self) -> None:
+        ctx = make_ctx([make_observation()])
+        llm = ScriptedLLM(
+            [
+                [ToolCall(id="c1", name="remember", params={"key": "k", "value": "v"})],
+                [ToolCall(id="c2", name="finish", params={"summary": "done"})],
+            ]
+        )
+        DiscoveryLoop(llm, ctx, max_steps=5).run("goal")
+        second = llm.requests[1]
+        assert [m["role"] for m in second] == [
+            "system", "user", "assistant", "tool",
+        ]
+        assert second[2]["tool_calls"][0]["id"] == "c1"
+        assert second[2]["tool_calls"][0]["function"]["name"] == "remember"
+        assert second[3]["tool_call_id"] == "c1"
+        assert "success" in second[3]["content"]
+
+    def test_no_call_response_breaks_the_cadence_chain(self) -> None:
+        ctx = make_ctx([make_observation()])
+        llm = ScriptedLLM(
+            [
+                [],
+                [ToolCall(id="c1", name="finish", params={"summary": "done"})],
+            ]
+        )
+        DiscoveryLoop(llm, ctx, max_steps=5).run("goal")
+        second = llm.requests[1]
+        assert [m["role"] for m in second] == ["system", "user"]
+
+
+class TestDuplicateActionGuard:
+    """Regression (observed live): a model that re-issues the exact same
+    call right after it succeeded is derping, not retrying — reject it with
+    a corrective typed error so the run can move on instead of grinding
+    into a no-progress halt."""
+
+    def test_immediate_duplicate_of_successful_action_is_rejected(self) -> None:
+        ctx = make_ctx([make_observation()])
+        remember_call = ToolCall(
+            id="a", name="remember", params={"key": "k", "value": "v"}
+        )
+        llm = ScriptedLLM(
+            [
+                [remember_call],
+                [remember_call],
+                [ToolCall(id="c", name="finish", params={"summary": "done"})],
+            ]
+        )
+        result = DiscoveryLoop(llm, ctx, max_steps=6).run("goal")
+        assert result.status is RunStatus.COMPLETED
+        assert result.action_log[0].status == "success"
+        assert result.action_log[1].status == "error"
+        assert "duplicate action" in result.action_log[1].message
+
+    def test_retry_after_failure_is_still_allowed(self) -> None:
+        """A failed action may legitimately be retried unchanged."""
+        ctx = make_ctx([make_observation()])
+        click_call = ToolCall(id="a", name="click", params={"index": 99})
+        llm = ScriptedLLM(
+            [
+                [click_call],
+                [click_call],
+                [ToolCall(id="c", name="finish", params={"summary": "done"})],
+            ]
+        )
+        result = DiscoveryLoop(llm, ctx, max_steps=6).run("goal")
+        assert result.status is RunStatus.COMPLETED
+        # Both attempts were executed (both failed: no element at 99),
+        # neither was rejected as a duplicate.
+        assert result.action_log[0].status == "error"
+        assert "duplicate action" not in result.action_log[0].message
+        assert "duplicate action" not in result.action_log[1].message
+        assert "no element at index 99" in result.action_log[1].message

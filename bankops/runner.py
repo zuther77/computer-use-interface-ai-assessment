@@ -77,7 +77,25 @@ def run_discovery(
         max_steps=max_steps,
         step_logger=logger,
     )
-    result = loop.run(goal)
+    try:
+        result = loop.run(goal)
+    except BaseException as exc:
+        # Evidence durability: a mid-run crash must still leave the run's
+        # final screenshot and summary behind (§10a/§10b) — the JSONL step
+        # log is already written incrementally per step.
+        try:
+            adapter.capture_screenshot(directory / "final.png")
+        except Exception:
+            pass
+        logger.write_summary(
+            {
+                "status": "crashed",
+                "reason": f"{type(exc).__name__}: {exc}",
+                "goal": goal,
+                "memory": ctx.memory,
+            }
+        )
+        raise
 
     try:
         adapter.capture_screenshot(directory / "final.png")

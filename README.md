@@ -99,9 +99,12 @@ ParaBank's sample database ships a verified demo user — **username `john`,
 password `demo`**:
 
 ```bash
+# NOTE: single quotes matter — "$25.00" in double quotes makes bash expand
+# $25 as an empty positional parameter, and the agent would be told to
+# transfer ".00".
 uv run python -m bankops discover \
   --name parabank_transfer_funds \
-  --goal "Log in to ParaBank as user john with password demo, then transfer $25.00 from your first account to your second account, then log out."
+  --goal 'Log in to ParaBank as user john with password demo, then transfer $25.00 from your first account to your second account, then log out.'
 ```
 
 - Add `--headed` to watch the browser window while the agent works.

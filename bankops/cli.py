@@ -134,14 +134,25 @@ def main(argv: list[str] | None = None) -> int:
 
             if args.command == "discover":
                 run_id = args.run_id or _new_run_id("discovery")
-                result, artifact = run_discovery(
-                    args.goal,
-                    artifact_name=args.name,
-                    adapter=adapter,
-                    client=OpenAIToolCallingClient(),
-                    run_id=run_id,
-                    max_steps=args.max_steps,
-                )
+                try:
+                    result, artifact = run_discovery(
+                        args.goal,
+                        artifact_name=args.name,
+                        adapter=adapter,
+                        client=OpenAIToolCallingClient(),
+                        run_id=run_id,
+                        max_steps=args.max_steps,
+                    )
+                except Exception as exc:
+                    print(
+                        f"[discover] run {run_id}: CRASHED — "
+                        f"{type(exc).__name__}: {exc}"
+                    )
+                    print(
+                        "[discover] evidence (incl. summary.json): "
+                        f"evidence/discovery_run_{run_id}/"
+                    )
+                    return 1
                 print(
                     f"[discover] run {run_id}: {result.status.value} — {result.reason}"
                 )
@@ -160,13 +171,24 @@ def main(argv: list[str] | None = None) -> int:
 
             artifact = Artifact.load(args.artifact)
             run_id = args.run_id or _new_run_id("replay")
-            result = run_replay(
-                artifact,
-                _parse_params(args.param),
-                adapter=adapter,
-                confirm=args.confirm,
-                run_id=run_id,
-            )
+            try:
+                result = run_replay(
+                    artifact,
+                    _parse_params(args.param),
+                    adapter=adapter,
+                    confirm=args.confirm,
+                    run_id=run_id,
+                )
+            except Exception as exc:
+                print(
+                    f"[replay] run {run_id}: CRASHED — "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                print(
+                    "[replay] evidence (incl. summary.json): "
+                    f"evidence/replay_success_{run_id}/"
+                )
+                return 1
             code = _print_replay_result(result)
             folder = "replay_error" if result.status != "success" else "replay_success"
             print(f"[replay] evidence: evidence/{folder}_{run_id}/")

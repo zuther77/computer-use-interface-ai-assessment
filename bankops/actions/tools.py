@@ -22,7 +22,7 @@ from typing import Any, Callable
 from pydantic import BaseModel
 
 from bankops.perception.base import Observation, PerceptionAdapter
-from bankops.safety.allowlist import Allowlist
+from bankops.safety.allowlist import Allowlist, AllowlistViolation
 
 
 class ToolStatus(str, Enum):
@@ -140,7 +140,9 @@ def select_option(ctx: ToolContext, index: int, option: str) -> ToolResult:
 def navigate(ctx: ToolContext, url: str) -> ToolResult:
     ctx.allowlist.check_action("navigate")
     ctx.allowlist.check_navigate(url)
-    ctx.adapter.navigate(url)
+    status = ctx.adapter.navigate(url)
+    if status is not None and status >= 400:
+        raise ActionError(f"navigation failed: HTTP {status} at {url}")
     return ToolResult(
         action="navigate",
         status=ToolStatus.SUCCESS,
@@ -217,6 +219,9 @@ def dispatch(ctx: ToolContext, name: str, params: dict[str, Any]) -> ToolResult:
         )
     try:
         return handler(ctx, **params)
+    except AllowlistViolation:
+        # Policy violations must never be swallowed (§8a) — they raise.
+        raise
     except ActionError as exc:
         # Operational failures come back as typed ERROR results (§3d:
         # failed actions feed no-progress detection), never as crashes.
@@ -226,6 +231,18 @@ def dispatch(ctx: ToolContext, name: str, params: dict[str, Any]) -> ToolResult:
             action=name,
             status=ToolStatus.ERROR,
             message=f"invalid parameters for '{name}': {exc}",
+        )
+    except Exception as exc:
+        # Surface-level action failures — Playwright timeouts (e.g. an
+        # element that went hidden/detached after its observation was
+        # taken), navigation races — are operational errors too, never
+        # crashes: the loop records them as typed failed actions so
+        # no-progress detection (§3d) halts with a reason instead of the
+        # process dying and losing the run's evidence.
+        return ToolResult(
+            action=name,
+            status=ToolStatus.ERROR,
+            message=f"action failed: {type(exc).__name__}: {exc}",
         )
 
 
