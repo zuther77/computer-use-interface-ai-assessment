@@ -27,7 +27,18 @@ MAX_STEPS = int(os.environ.get("BANKOPS_MAX_STEPS", "40"))
 # Two-dimensional allowlist config (DECISIONS.md §8a).
 from pathlib import Path  # noqa: E402
 
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
 ALLOWLIST_PATH = os.environ.get(
-    "BANKOPS_ALLOWLIST_PATH",
-    str(Path(__file__).resolve().parents[1] / "config" / "allowlist.yaml"),
+    "BANKOPS_ALLOWLIST_PATH", str(_REPO_ROOT / "config" / "allowlist.yaml")
+)
+
+# Persisted intervention requests land here (DECISIONS.md §9a).
+PENDING_DIR = os.environ.get(
+    "BANKOPS_PENDING_DIR", str(_REPO_ROOT / "pending_interventions")
+)
+
+# Per-run evidence folders land here (DECISIONS.md §10b).
+EVIDENCE_DIR = os.environ.get(
+    "BANKOPS_EVIDENCE_DIR", str(_REPO_ROOT / "evidence")
 )

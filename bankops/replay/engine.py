@@ -35,6 +35,24 @@ from bankops.safety.risk import ConfirmationRequired, check_confirmation
 
 _JSESSIONID = re.compile(r";jsessionid=[^?]*")
 
+def normalize_url(url: str) -> str:
+    """ParaBank decorates URLs with ;jsessionid=... — strip for compare."""
+    return _JSESSIONID.sub("", url).rstrip("/")
+
+
+def checkpoint_matches(checkpoint, observation: Observation) -> bool:
+    """§4e page-state signature match: URL (session-id-insensitive) plus the
+    stable page-identity signal (with title fallbacks). Shared by the
+    replay engine and the escalation resume verification (§9c) so both
+    verify state with exactly the same rule."""
+    return normalize_url(checkpoint.url) == normalize_url(
+        observation.url
+    ) and (
+        checkpoint.page_identity == observation.page_identity
+        or checkpoint.page_identity == observation.title
+        or checkpoint.page_identity in observation.page_identity
+    )
+
 
 class EscalationRequested(Exception):
     """Raised by escalation wiring (Phase 8) mid-replay. The per-invocation
@@ -386,18 +404,11 @@ class ReplayEngine:
         )
 
     def _checkpoint_matches(self, checkpoint, observation: Observation) -> bool:
-        return self._normalize_url(
-            checkpoint.url
-        ) == self._normalize_url(observation.url) and (
-            checkpoint.page_identity == observation.page_identity
-            or checkpoint.page_identity == observation.title
-            or checkpoint.page_identity in observation.page_identity
-        )
+        return checkpoint_matches(checkpoint, observation)
 
     @staticmethod
     def _normalize_url(url: str) -> str:
-        # ParaBank decorates URLs with ;jsessionid=... — strip for compare.
-        return _JSESSIONID.sub("", url).rstrip("/")
+        return normalize_url(url)
 
 
 def replay_artifact(
