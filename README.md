@@ -30,7 +30,9 @@ Design rationale for every choice lives in [`DECISIONS.md`](DECISIONS.md).
 
 ## Requirements
 
-- Python ≥ 3.10 and Docker
+- [uv](https://docs.astral.sh/uv/) (Python ≥ 3.10 is provisioned inside the
+  project's local `.venv` — nothing installs into a global Python)
+- Docker
 - An OpenAI-compatible LLM endpoint with reliable tool-calling — **needed for
   discovery only; replay never calls an LLM**
 
@@ -44,9 +46,9 @@ docker compose up -d
 # give it ~1 minute, then verify:
 curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8080/parabank/index.htm   # -> 200
 
-# 2. Install the package and a browser for Playwright
-pip install -e ".[dev]"
-playwright install chromium
+# 2. Install the package and a browser for Playwright (local .venv only)
+uv sync                               # creates .venv; uv.lock pins exact versions
+uv run playwright install chromium
 
 # 3. Configure (keys live in .env — git-ignored, never in shell history)
 cp config/.env.example .env
@@ -57,6 +59,8 @@ cp config/.env.example .env
 ```
 
 The CLI loads `.env` (repo root; `config/.env` also works) before anything else.
+Every command below runs through `uv run`, which executes inside the project's
+local `.venv` — your global Python is never touched.
 
 ### Configuration reference
 
@@ -76,7 +80,7 @@ The safety allowlist is declarative and reviewable at `config/allowlist.yaml`:
 The full test suite needs **no LLM and no ParaBank**:
 
 ```bash
-pytest        # 134 tests
+uv run pytest   # 134 tests
 ```
 
 The LLM is mocked everywhere; browser-facing tests run against small static HTML
@@ -95,7 +99,7 @@ ParaBank's sample database ships a verified demo user — **username `john`,
 password `demo`**:
 
 ```bash
-python -m bankops discover \
+uv run python -m bankops discover \
   --name parabank_transfer_funds \
   --goal "Log in to ParaBank as user john with password demo, then transfer $25.00 from your first account to your second account, then log out."
 ```
@@ -112,7 +116,7 @@ python -m bankops discover \
 ### 2. Replay the resulting artifact (no LLM)
 
 ```bash
-python -m bankops replay \
+uv run python -m bankops replay \
   --artifact evidence/artifacts/parabank_transfer_funds.json \
   --param amount=25.00 --param from_account=12345
 ```
@@ -120,7 +124,7 @@ python -m bankops replay \
 Parameter names come from the artifact — check its declared inputs first:
 
 ```bash
-python -m json.tool < evidence/artifacts/parabank_transfer_funds.json | less   # see "inputs": [...]
+uv run python -m json.tool < evidence/artifacts/parabank_transfer_funds.json | less   # see "inputs": [...]
 ```
 
 Bad or missing parameters are rejected **pre-flight**, before the browser touches
