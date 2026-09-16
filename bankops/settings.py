@@ -42,3 +42,15 @@ PENDING_DIR = os.environ.get(
 EVIDENCE_DIR = os.environ.get(
     "BANKOPS_EVIDENCE_DIR", str(_REPO_ROOT / "evidence")
 )
+
+# Evidence/terminal redaction (DECISIONS.md §8c). Fully implemented and
+# pinned by the test suite, but DISABLED by default "for now" per operator
+# preference, so live agent runs show real values (credentials, created
+# account numbers) in the terminal feed and under /evidence/. Re-enable
+# with BANKOPS_REDACT=true or the CLI's --redact flag.
+REDACT = os.environ.get("BANKOPS_REDACT", "false").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)

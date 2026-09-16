@@ -193,6 +193,24 @@ def report_stuck(ctx: ToolContext, reason: str) -> ToolResult:
     )
 
 
+def observe(ctx: ToolContext) -> ToolResult:
+    """Take a fresh observation of the current page and return its render.
+
+    A no-op primitive for models that want to re-check page state before
+    acting — observed live as the intent ("let me look at the current
+    page") behind text-only no-tool-call responses. Not page-affecting
+    (§3d): it never feeds the no-progress detector.
+    """
+    ctx.allowlist.check_action("observe")
+    observation = ctx.refresh_observation()
+    return ToolResult(
+        action="observe",
+        status=ToolStatus.SUCCESS,
+        message=f"observed: {observation.page_identity}",
+        data=observation.render(),
+    )
+
+
 # -- Registry & dispatch ------------------------------------------------------
 
 ACTIONS: dict[str, Callable[..., ToolResult]] = {
@@ -204,6 +222,7 @@ ACTIONS: dict[str, Callable[..., ToolResult]] = {
     "remember": remember,
     "finish": finish,
     "report_stuck": report_stuck,
+    "observe": observe,
 }
 
 
@@ -249,6 +268,23 @@ def dispatch(ctx: ToolContext, name: str, params: dict[str, Any]) -> ToolResult:
 # -- OpenAI tool-calling schemas (consumed by the Phase 4 loop, §2d) -----------
 
 OPENAI_TOOLS: list[dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "observe",
+            "description": (
+                "Take a fresh observation of the current page and return "
+                "its indexed interactive-element list — use this whenever "
+                "you want to re-check the page state before or after "
+                "acting; it changes nothing."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
     {
         "type": "function",
         "function": {

@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from pydantic import BaseModel, Field
 
@@ -37,6 +37,7 @@ from bankops.actions.tools import (
 from bankops.artifact.models import LocatorCandidate
 from bankops.perception.base import Observation
 from bankops.safety.allowlist import AllowlistViolation
+from bankops.safety.redaction import mask_known_values, redact_action
 
 # Actions that are supposed to change the page state. Only these feed the
 # observation-hash no-progress detector — remember/extract legitimately
@@ -56,7 +57,15 @@ SYSTEM_PROMPT = (
     "allowlist — if an action is blocked, choose a different approach. "
     "Type monetary amounts as plain numbers without currency symbols "
     "(for example 25.00, not $25.00). "
-    "When the goal is achieved, call `finish` with a summary; if you truly "
+    "Use `observe` whenever you want a fresh look at the page — never "
+    "narrate an intention without acting on it. "
+    "Before each tool call, state in one short sentence why this action "
+    "moves toward the goal. "
+    "If the same action fails or the page doesn't change after two "
+    "attempts, don't repeat it — try a different element, or call "
+    "`report_stuck` with what you observed. "
+    "Only call `finish` once the current page visibly confirms the goal "
+    "was achieved — never call finish based on assumption; if you truly "
     "cannot proceed, call `report_stuck` with the reason."
 )
 
@@ -66,6 +75,10 @@ class ToolCall:
     id: str
     name: str
     params: dict[str, Any] = field(default_factory=dict)
+    reasoning: str = ""
+    """The model's accompanying one-sentence rationale (§10a: LLM
+    reasoning is evidence) — captured from message.content, masked before
+    persistence (§8c), and never a decision input."""
 
 
 class LLMClient(Protocol):
@@ -102,13 +115,25 @@ class OpenAIToolCallingClient:
             tools=tools or OPENAI_TOOLS,
         )
         message = response.choices[0].message
+        # §10a: the model's rationale sentence is captured (not discarded)
+        # so it can be persisted as evidence — and so a content-only
+        # response (no tool calls) still leaves its exit words behind.
+        reasoning = (message.content or "").strip()
+        self.last_content = reasoning
         calls: list[ToolCall] = []
         for tc in message.tool_calls or []:
             try:
                 params = json.loads(tc.function.arguments or "{}")
             except json.JSONDecodeError:
                 params = {}
-            calls.append(ToolCall(id=tc.id, name=tc.function.name, params=params))
+            calls.append(
+                ToolCall(
+                    id=tc.id,
+                    name=tc.function.name,
+                    params=params,
+                    reasoning=reasoning,
+                )
+            )
         return calls
 
 
@@ -141,6 +166,7 @@ class ActionLogEntry(BaseModel):
     observation_hash: str = ""
     element_role: str = ""
     element_name: str = ""
+    reasoning: str = ""
     locator_candidates: list[LocatorCandidate] = Field(default_factory=list)
 
 
@@ -150,7 +176,25 @@ class RunResult(BaseModel):
     reason: str
     action_log: list[ActionLogEntry] = Field(default_factory=list)
     memory: dict[str, str] = Field(default_factory=dict)
+    sensitive_values: list[str] = Field(default_factory=list)
     final_observation: Observation | None = None
+
+
+class StepProgress(BaseModel):
+    """A live per-action progress event for operator-facing surfaces (the
+    CLI's step feed): what was done, to what target, with what result, and
+    the model's one-sentence rationale for it. Fields are §8c-masked by
+    the loop before emission — the terminal feed never echoes a
+    credential, just like the persisted evidence."""
+
+    step: int
+    action: str
+    status: str
+    target: str = ""
+    reasoning: str = ""
+    message: str = ""
+    url: str = ""
+    page: str = ""
 
 
 class DiscoveryLoop:
@@ -164,6 +208,7 @@ class DiscoveryLoop:
         max_steps: int | None = None,
         no_progress_limit: int = 3,
         step_logger=None,
+        on_progress: Callable[[StepProgress], None] | None = None,
     ) -> None:
         self.client = client
         self.ctx = ctx
@@ -171,6 +216,7 @@ class DiscoveryLoop:
         self.no_progress_limit = no_progress_limit
         self.action_log: list[ActionLogEntry] = []
         self.step_logger = step_logger
+        self.on_progress = on_progress
 
     # -- Structured state → messages (§3c) ----------------------------------
 
@@ -198,16 +244,33 @@ class DiscoveryLoop:
         # *current* turn — repeat the requirement explicitly here, not only
         # in the history summary (§3d: ending a run is a typed tool call).
         if self.action_log and self.action_log[-1].action == "(none)":
+            last_words = self.action_log[-1].reasoning
             content += (
-                "\n\nREMINDER: your previous response contained no tool call. "
-                "Respond now with exactly one tool call — finish(summary) "
-                "if the goal is achieved, report_stuck(reason) if you "
-                "cannot proceed."
+                "\n\nREMINDER: your previous response was text-only and "
+                "contained no tool call, so nothing happened."
+            )
+            if last_words:
+                content += f' (You said: "{last_words[:160]}")'
+            content += (
+                " Do not narrate intentions: the CURRENT PAGE section above "
+                "IS the live page state — you never need to wait for it or "
+                "ask for it. Respond now with exactly one tool call: "
+                "`observe` for a fresh look, `finish(summary)` if the goal "
+                "is achieved, or `report_stuck(reason)` if you cannot "
+                "proceed."
             )
         return [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": content},
         ]
+
+    def _mask(self, text: str, values: list[str]) -> str:
+        """§8c masking, toggle-gated: implemented and test-verified, but
+        disabled by default for now (settings.REDACT) so live agent runs
+        show real values in the terminal feed and evidence."""
+        if not settings.REDACT:
+            return text
+        return mask_known_values(text, values)
 
     # -- The loop ------------------------------------------------------------
 
@@ -230,6 +293,11 @@ class DiscoveryLoop:
         # clicking the same link again later) are unaffected.
         prev_signature: tuple[str, str] | None = None
         prev_status: str = ""
+        # §8c: values this run has already treated as sensitive — they get
+        # masked wherever they resurface later (a reasoning sentence echoing
+        # a password typed steps earlier, a no-call exit note, …).
+        sensitive_seen: list[str] = []
+        self.sensitive_seen = sensitive_seen
 
         for step in range(1, self.max_steps + 1):
             step_start_hash = self.ctx.observation.observation_hash
@@ -254,6 +322,7 @@ class DiscoveryLoop:
                         params={},
                         status="error",
                         message=reminder,
+                        reasoning=getattr(self.client, "last_content", ""),
                         url=self.ctx.adapter.current_url(),
                         page_title=self.ctx.observation.title,
                         page_identity=self.ctx.observation.page_identity,
@@ -268,6 +337,8 @@ class DiscoveryLoop:
                         status="error",
                         params={},
                         message=reminder,
+                        reasoning=getattr(self.client, "last_content", ""),
+                        mask_values=list(sensitive_seen),
                         data=None,
                         element_name="",
                         url=self.ctx.adapter.current_url(),
@@ -275,6 +346,21 @@ class DiscoveryLoop:
                             f"{self.ctx.observation.page_identity} "
                             f"({self.ctx.observation.title})"
                         ),
+                    )
+                if self.on_progress is not None:
+                    self.on_progress(
+                        StepProgress(
+                            step=step,
+                            action="(no tool call)",
+                            status="error",
+                            reasoning=self._mask(
+                                getattr(self.client, "last_content", ""),
+                                sensitive_seen,
+                            ),
+                            message="reminded the model to answer with a tool call",
+                            url=self.ctx.adapter.current_url(),
+                            page=self.ctx.observation.page_identity,
+                        )
                     )
                 consecutive_stale += 1
                 if consecutive_stale >= self.no_progress_limit:
@@ -285,7 +371,9 @@ class DiscoveryLoop:
             step_exchange: list[dict[str, Any]] = [
                 {
                     "role": "assistant",
-                    "content": None,
+                    # The model's own rationale rides the cadence turn —
+                    # seeing its prior reasoning keeps it consistent.
+                    "content": calls[0].reasoning or None,
                     "tool_calls": [
                         {
                             "id": call.id or f"call_{step}_{i}",
@@ -338,6 +426,28 @@ class DiscoveryLoop:
                         )
                 prev_signature, prev_status = signature, result.status.value
                 post_observation = self.ctx.refresh_observation()
+                # §8c: track the values this step treats as sensitive, so
+                # later reasoning sentences / exit notes echoing them are
+                # masked at write time.
+                safe_params, safe_data = redact_action(
+                    call.name,
+                    call.params,
+                    element_name=element.name if element else "",
+                    data=result.data,
+                )
+                for key, value in call.params.items():
+                    if (
+                        safe_params.get(key) != value
+                        and isinstance(value, (str, int, float))
+                        and str(value)
+                    ):
+                        sensitive_seen.append(str(value))
+                if (
+                    result.data is not None
+                    and safe_data != result.data
+                    and str(result.data)
+                ):
+                    sensitive_seen.append(str(result.data))
                 step_exchange.append(
                     {
                         "role": "tool",
@@ -361,6 +471,7 @@ class DiscoveryLoop:
                         observation_hash=post_observation.observation_hash,
                         element_role=element.role if element else "",
                         element_name=element.name if element else "",
+                        reasoning=call.reasoning,
                         locator_candidates=(
                             [c.model_copy() for c in element.locators]
                             if element
@@ -379,18 +490,63 @@ class DiscoveryLoop:
                         message=result.message,
                         data=result.data,
                         element_name=element.name if element else "",
+                        reasoning=call.reasoning,
+                        mask_values=list(sensitive_seen),
                         url=post_observation.url,
                         observation_summary=(
                             f"{post_observation.page_identity} "
                             f"({post_observation.title})"
                         ),
                     )
+                if self.on_progress is not None:
+                    if element is not None:
+                        target = (
+                            f'{element.role} "{element.name}"'
+                            if element.name
+                            else element.role
+                        )
+                    elif call.name == "navigate":
+                        target = str(call.params.get("url", ""))
+                    elif call.name == "remember":
+                        target = (
+                            f"{safe_params.get('key', '')} = "
+                            f"{safe_params.get('value', '')}"
+                        )
+                    else:
+                        target = ""
+                    self.on_progress(
+                        StepProgress(
+                            step=step,
+                            action=call.name,
+                            status=result.status.value,
+                            target=target,
+                            reasoning=self._mask(
+                                call.reasoning, sensitive_seen
+                            ),
+                            message=(
+                                self._mask(result.message, sensitive_seen)
+                                if result.status is ToolStatus.ERROR
+                                else ""
+                            ),
+                            url=post_observation.url,
+                            page=post_observation.page_identity,
+                        )
+                    )
                 if call.name in _PAGE_AFFECTING:
                     page_affecting_attempt = True
                 if result.status is ToolStatus.FINISHED:
-                    return self._result(RunStatus.COMPLETED, result.message)
+                    # §8c: the model's own summary may echo a credential —
+                    # mask values this run already treated as sensitive
+                    # before the reason reaches summary.json/CLI.
+                    return self._result(
+                        RunStatus.COMPLETED,
+                        self._mask(result.message, sensitive_seen),
+                    )
                 if result.status is ToolStatus.STUCK:
-                    return self._result(RunStatus.STUCK, result.message)
+                    return self._result(
+                        RunStatus.STUCK,
+                        self._mask(result.message, sensitive_seen),
+                    )
 
             last_exchange = step_exchange
 
@@ -420,6 +576,7 @@ class DiscoveryLoop:
             reason=reason,
             action_log=list(self.action_log),
             memory=dict(self.ctx.memory),
+            sensitive_values=list(getattr(self, "sensitive_seen", [])),
             final_observation=self.ctx.observation,
         )
 

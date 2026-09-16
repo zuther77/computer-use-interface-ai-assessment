@@ -108,6 +108,60 @@ def redact_action(
     return redacted, data
 
 
+def redact_reasoning(
+    reasoning: str,
+    action: str,
+    params: dict[str, Any],
+    element_name: str = "",
+) -> str:
+    """Mask sensitive values that a free-text reasoning sentence may echo
+    (§8c): the values of sensitive-named params, of ``text``/``option``/
+    ``value`` params targeting a sensitive-named element, and of a
+    ``remember`` store under a sensitive key are replaced wherever they
+    occur in the reasoning. Name-based, like every §8c rule: honest about
+    depending on descriptive naming, blind to non-obvious names."""
+    if not reasoning:
+        return reasoning
+    sensitive_values: list[str] = []
+    if action == "remember":
+        stored_key = str(params.get("key", ""))
+        if stored_key and is_sensitive_name(stored_key) and "value" in params:
+            sensitive_values.append(str(params["value"]))
+    for key, value in params.items():
+        if is_sensitive_name(str(key)) and str(key) != "key":
+            sensitive_values.append(str(value))
+    if element_name and is_sensitive_name(element_name):
+        for key in ("text", "option", "value"):
+            if key in params:
+                sensitive_values.append(str(params[key]))
+    text = reasoning
+    for value in sensitive_values:
+        if value:
+            text = text.replace(value, MASK)
+    return text
+
+
+def mask_known_values(obj: Any, values: list[str]) -> Any:
+    """Replace occurrences of already-known-sensitive values wherever they
+    resurface (§8c) — free-text fields where the name-based rules cannot
+    apply: tool-result messages, model-authored summaries/params echoing a
+    credential, result data, rationale sentences. Recursive over dicts and
+    lists; non-text scalars are masked when their string form contains a
+    known-sensitive value."""
+    if isinstance(obj, dict):
+        return {key: mask_known_values(value, values) for key, value in obj.items()}
+    if isinstance(obj, list):
+        return [mask_known_values(item, values) for item in obj]
+    if isinstance(obj, str):
+        for value in values:
+            if value:
+                obj = obj.replace(value, MASK)
+        return obj
+    if obj is not None and any(v and v in str(obj) for v in values):
+        return MASK
+    return obj
+
+
 def redact_nested(obj: Any) -> Any:
     """Recursively mask sensitive-named keys in nested dicts/lists —
     used for evidence summaries that embed working memory, etc."""

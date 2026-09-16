@@ -91,6 +91,11 @@ def main(argv: list[str] | None = None) -> int:
         help="show the browser window while the agent works",
     )
     discover.add_argument("--run-id", default=None)
+    discover.add_argument(
+        "--redact",
+        action="store_true",
+        help="mask credentials/sensitive values in the feed and evidence (§8c)",
+    )
 
     replay = sub.add_parser(
         "replay", help="deterministically replay a saved artifact (no LLM)"
@@ -112,6 +117,11 @@ def main(argv: list[str] | None = None) -> int:
         "--headed", action="store_true", help="show the browser window"
     )
     replay.add_argument("--run-id", default=None)
+    replay.add_argument(
+        "--redact",
+        action="store_true",
+        help="mask credentials/sensitive values in the evidence (§8c)",
+    )
 
     args = parser.parse_args(argv)
 
@@ -125,6 +135,17 @@ def main(argv: list[str] | None = None) -> int:
     from bankops.perception.playwright_adapter import PlaywrightPerceptionAdapter
     from bankops.runner import _new_run_id, run_discovery, run_replay
 
+    if args.redact:
+        settings.REDACT = True
+    if not settings.REDACT:
+        print(
+            "[bankops] evidence redaction is OFF (operator preference, "
+            "'for now') — real values (credentials, account numbers) WILL "
+            "appear in this terminal and under /evidence/. "
+            "Re-enable with --redact or BANKOPS_REDACT=true.",
+            flush=True,
+        )
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=not args.headed)
         try:
@@ -134,6 +155,24 @@ def main(argv: list[str] | None = None) -> int:
 
             if args.command == "discover":
                 run_id = args.run_id or _new_run_id("discovery")
+
+                def _report_progress(event) -> None:
+                    """Live operator feed: every action, its target, its
+                    result — plus the model's own one-line rationale
+                    (masked when redaction is enabled, raw when disabled)."""
+                    line = f"[{event.step:>2}] {event.action}"
+                    if event.target:
+                        line += f" → {event.target}"
+                    line += f"  ({event.status})"
+                    if event.page:
+                        line += f"  ·  {event.page}"
+                    print(line, flush=True)
+                    if event.reasoning:
+                        print(f"        ↳ {event.reasoning}", flush=True)
+                    if event.status == "error" and event.message:
+                        print(f"        ! {event.message[:140]}", flush=True)
+
+                print(f"[discover] run {run_id}: {args.goal}", flush=True)
                 try:
                     result, artifact = run_discovery(
                         args.goal,
@@ -142,6 +181,7 @@ def main(argv: list[str] | None = None) -> int:
                         client=OpenAIToolCallingClient(),
                         run_id=run_id,
                         max_steps=args.max_steps,
+                        progress=_report_progress,
                     )
                 except Exception as exc:
                     print(

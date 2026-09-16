@@ -48,6 +48,7 @@ def make_allowlist(**overrides) -> Allowlist:
                 "remember",
                 "finish",
                 "report_stuck",
+                "observe",
             )
         },
     )
@@ -274,3 +275,21 @@ class TestNavigateErrorPages:
         )
         assert result.status is ToolStatus.ERROR
         assert "HTTP 404" in result.message
+
+
+class TestObserveTool:
+    def test_observe_returns_fresh_render(self, ctx) -> None:
+        """`observe` is the legitimate way to express 'let me look at the
+        page' — a typed, no-op tool that returns the fresh observation."""
+        result = dispatch(ctx, "observe", {})
+        assert result.status is ToolStatus.SUCCESS
+        assert result.data is not None
+        assert '[0] textbox "Amount"' in result.data
+
+    def test_observe_blocked_when_denied(self, ctx) -> None:
+        ctx.allowlist.action_types = {
+            **ctx.allowlist.action_types,
+            "observe": "deny",
+        }
+        with pytest.raises(AllowlistViolation):
+            dispatch(ctx, "observe", {})

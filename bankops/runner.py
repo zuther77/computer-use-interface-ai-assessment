@@ -59,6 +59,7 @@ def run_discovery(
     run_id: str | None = None,
     evidence_dir: str | Path | None = None,
     max_steps: int | None = None,
+    progress: Any | None = None,
 ) -> tuple[RunResult, Artifact | None]:
     """One live discovery run: observe → decide → act with the real LLM,
     logged to evidence/discovery_run_{id}/. If (and only if) it ends via
@@ -76,6 +77,7 @@ def run_discovery(
         ctx,
         max_steps=max_steps,
         step_logger=logger,
+        on_progress=progress,
     )
     try:
         result = loop.run(goal)
@@ -116,7 +118,8 @@ def run_discovery(
             "memory": result.memory,
             "final_url": final_url,
             "final_page_identity": final_identity,
-        }
+        },
+        mask_values=result.sensitive_values,
     )
 
     artifact: Artifact | None = None

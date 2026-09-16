@@ -122,6 +122,7 @@ def make_ctx(observations: list[Observation]) -> ToolContext:
             "remember": "allow",
             "finish": "allow",
             "report_stuck": "allow",
+            "observe": "allow",
         },
     )
     ctx = ToolContext(adapter=FakeAdapter(observations), allowlist=allowlist)
@@ -353,3 +354,377 @@ class TestDuplicateActionGuard:
         assert "duplicate action" not in result.action_log[0].message
         assert "duplicate action" not in result.action_log[1].message
         assert "no element at index 99" in result.action_log[1].message
+
+
+class TestReasoningCapture:
+    """§10a: the model's one-sentence rationale is persisted per step, with
+    §8c masking — including values treated as sensitive earlier in the
+    run, so a later sentence cannot echo a password typed steps before."""
+
+    def _ctx_with_password_field(self):
+        observation = Observation(
+            url="http://localhost:8080/parabank/index.htm",
+            title="ParaBank",
+            page_identity="Customer Login",
+            elements=[
+                ObservedElement(
+                    index=0,
+                    tag="input",
+                    role="textbox",
+                    name="Password",
+                    locators=[
+                        LocatorCandidate(
+                            strategy=LocatorStrategy.ID_ATTRIBUTE,
+                            value="#password",
+                        )
+                    ],
+                )
+            ],
+        )
+        return make_ctx([observation])
+
+    def test_reasoning_persisted_and_masked(self, tmp_path) -> None:
+        import json
+
+        from bankops.evidence.logger import StepLogger
+
+        ctx = self._ctx_with_password_field()
+        logger = StepLogger(tmp_path, run_id="r", run_kind="discovery")
+        llm = ScriptedLLM(
+            [
+                [
+                    ToolCall(
+                        id="1",
+                        name="type_text",
+                        params={"index": 0, "text": "s3cret"},
+                        reasoning="I will type the password s3cret now",
+                    )
+                ],
+                [ToolCall(id="2", name="finish", params={"summary": "done"})],
+            ]
+        )
+        result = DiscoveryLoop(llm, ctx, max_steps=5, step_logger=logger).run("goal")
+        assert result.status is RunStatus.COMPLETED
+        line = json.loads((tmp_path / "steps.jsonl").read_text().splitlines()[0])
+        assert line["reasoning"] == "I will type the password ***MASKED*** now"
+        assert "s3cret" not in json.dumps(line)
+
+    def test_cross_step_echo_masked_via_sensitive_seen(self, tmp_path) -> None:
+        import json
+
+        from bankops.evidence.logger import StepLogger
+
+        ctx = self._ctx_with_password_field()
+        logger = StepLogger(tmp_path, run_id="r", run_kind="discovery")
+        llm = ScriptedLLM(
+            [
+                [
+                    ToolCall(
+                        id="1",
+                        name="type_text",
+                        params={"index": 0, "text": "s3cret"},
+                        reasoning="typing my password",
+                    )
+                ],
+                [
+                    ToolCall(
+                        id="2",
+                        name="remember",
+                        params={"key": "note", "value": "ok"},
+                        reasoning="done with the s3cret password field",
+                    )
+                ],
+                [ToolCall(id="3", name="finish", params={"summary": "done"})],
+            ]
+        )
+        DiscoveryLoop(llm, ctx, max_steps=6, step_logger=logger).run("goal")
+        lines = (tmp_path / "steps.jsonl").read_text().splitlines()
+        second = json.loads(lines[1])
+        # This step's own params are not sensitive — only the run-wide
+        # sensitive-value tracking can mask the echo.
+        assert "s3cret" not in second["reasoning"]
+        assert "***MASKED***" in second["reasoning"]
+
+    def test_no_call_content_captured_as_reasoning(self, tmp_path) -> None:
+        import json
+
+        from bankops.evidence.logger import StepLogger
+
+        class NoteLLM(ScriptedLLM):
+            def decide(self, messages, tools=None):
+                self.last_content = "I believe the goal is complete now"
+                return super().decide(messages, tools)
+
+        ctx = self._ctx_with_password_field()
+        logger = StepLogger(tmp_path, run_id="r", run_kind="discovery")
+        llm = NoteLLM(
+            [
+                [],
+                [ToolCall(id="1", name="finish", params={"summary": "done"})],
+            ]
+        )
+        DiscoveryLoop(llm, ctx, max_steps=5, step_logger=logger).run("goal")
+        line = json.loads((tmp_path / "steps.jsonl").read_text().splitlines()[0])
+        assert line["action"] == "(none)"
+        assert line["reasoning"] == "I believe the goal is complete now"
+
+
+class TestFreeTextEchoMasking:
+    """§8c end-to-end: a value the run treated as sensitive (typed into a
+    Password-labelled field) can never resurface — not in the finish
+    summary's params, its message, nor the run's terminal reason."""
+
+    def test_finish_summary_echo_masked_everywhere(self, tmp_path) -> None:
+        import json
+
+        from bankops.evidence.logger import StepLogger
+
+        ctx = TestReasoningCapture()._ctx_with_password_field()
+        logger = StepLogger(tmp_path, run_id="r", run_kind="discovery")
+        llm = ScriptedLLM(
+            [
+                [
+                    ToolCall(
+                        id="1",
+                        name="type_text",
+                        params={"index": 0, "text": "s3cret"},
+                        reasoning="typing my password",
+                    )
+                ],
+                [
+                    ToolCall(
+                        id="2",
+                        name="finish",
+                        params={
+                            "summary": "Done — logged in with password s3cret"
+                        },
+                    )
+                ],
+            ]
+        )
+        result = DiscoveryLoop(llm, ctx, max_steps=5, step_logger=logger).run("goal")
+        assert result.status is RunStatus.COMPLETED
+        # RunResult.reason (→ summary.json / CLI output):
+        assert "s3cret" not in result.reason
+        assert "***MASKED***" in result.reason
+        # The persisted finish step line: params, message — all scrubbed.
+        line = json.loads((tmp_path / "steps.jsonl").read_text().splitlines()[1])
+        assert "s3cret" not in json.dumps(line)
+        assert "***MASKED***" in line["params"]["summary"]
+        assert "***MASKED***" in line["message"]
+
+
+    def test_summary_goal_scrubbed_via_sensitive_values(self, tmp_path) -> None:
+        """The user's goal string itself can contain a credential; the run
+        summary must scrub it against values the run treated as sensitive."""
+        import json
+
+        from bankops.evidence.logger import StepLogger
+
+        ctx = TestReasoningCapture()._ctx_with_password_field()
+        logger = StepLogger(tmp_path, run_id="r", run_kind="discovery")
+        llm = ScriptedLLM(
+            [
+                [
+                    ToolCall(
+                        id="1",
+                        name="type_text",
+                        params={"index": 0, "text": "s3cret"},
+                        reasoning="typing my password",
+                    )
+                ],
+                [ToolCall(id="2", name="finish", params={"summary": "done"})],
+            ]
+        )
+        result = DiscoveryLoop(llm, ctx, max_steps=5, step_logger=logger).run("goal")
+        assert "s3cret" in result.sensitive_values
+        logger.write_summary(
+            {"goal": "log in with password s3cret", "reason": result.reason},
+            mask_values=result.sensitive_values,
+        )
+        raw = (tmp_path / "summary.json").read_text()
+        assert "s3cret" not in raw
+        assert "***MASKED***" in raw
+
+
+class TestProgressEvents:
+    """The CLI's live step feed is driven by per-action StepProgress
+    events — action, target, status, and the model's own one-sentence
+    rationale (§8c-masked before emission, like the persisted evidence)."""
+
+    def test_progress_events_emitted_per_action(self) -> None:
+        events = []
+        ctx = make_ctx([make_observation()])
+        llm = ScriptedLLM(
+            [
+                [
+                    ToolCall(
+                        id="1",
+                        name="remember",
+                        params={"key": "k", "value": "v"},
+                        reasoning="storing k",
+                    )
+                ],
+                [
+                    ToolCall(
+                        id="2",
+                        name="click",
+                        params={"index": 0},
+                        reasoning="clicking Log In",
+                    )
+                ],
+                [ToolCall(id="3", name="finish", params={"summary": "done"})],
+            ]
+        )
+        result = DiscoveryLoop(
+            llm, ctx, max_steps=6, on_progress=events.append
+        ).run("goal")
+        assert result.status is RunStatus.COMPLETED
+        assert [(e.action, e.status) for e in events] == [
+            ("remember", "success"),
+            ("click", "success"),
+            ("finish", "finished"),
+        ]
+        assert events[0].target == "k = v"
+        assert events[1].target == 'button "Log In"'
+        assert events[1].reasoning == "clicking Log In"
+
+    def test_no_call_step_emits_progress_event(self) -> None:
+        events = []
+        ctx = make_ctx([make_observation()])
+        llm = ScriptedLLM(
+            [
+                [],
+                [ToolCall(id="1", name="finish", params={"summary": "done"})],
+            ]
+        )
+        DiscoveryLoop(
+            llm, ctx, max_steps=5, on_progress=events.append
+        ).run("goal")
+        assert events[0].action == "(no tool call)"
+        assert events[0].status == "error"
+
+    def test_progress_reasoning_is_masked(self) -> None:
+        events = []
+        ctx = TestReasoningCapture()._ctx_with_password_field()
+        llm = ScriptedLLM(
+            [
+                [
+                    ToolCall(
+                        id="1",
+                        name="type_text",
+                        params={"index": 0, "text": "s3cret"},
+                        reasoning="typing s3cret now",
+                    )
+                ],
+                [ToolCall(id="2", name="finish", params={"summary": "done"})],
+            ]
+        )
+        DiscoveryLoop(
+            llm, ctx, max_steps=5, on_progress=events.append
+        ).run("goal")
+        assert events[0].reasoning == "typing ***MASKED*** now"
+
+
+    def test_no_call_reminder_quotes_model_words_and_points_at_observe(
+        self,
+    ) -> None:
+        """Regression (observed live): the model's text-only exit words
+        ("let me look at the current page") must be quoted back to it, with
+        the explicit fact that CURRENT PAGE is the live state and `observe`
+        is the tool for a fresh look."""
+        ctx = make_ctx([make_observation()])
+
+        class NarratingLLM(ScriptedLLM):
+            def decide(self, messages, tools=None):
+                self.last_content = "Let me look at the current page state"
+                return super().decide(messages, tools)
+
+        llm = NarratingLLM(
+            [
+                [],
+                [ToolCall(id="1", name="finish", params={"summary": "done"})],
+            ]
+        )
+        DiscoveryLoop(llm, ctx, max_steps=5).run("goal")
+        second_content = llm.requests[1][1]["content"]
+        assert 'You said: "Let me look at the current page state"' in second_content
+        assert "IS the live page state" in second_content
+        assert "`observe`" in second_content
+
+    def test_observe_dispatches_through_the_loop(self) -> None:
+        ctx = make_ctx([make_observation()])
+        llm = ScriptedLLM(
+            [
+                [
+                    ToolCall(
+                        id="1",
+                        name="observe",
+                        params={},
+                        reasoning="re-checking the page",
+                    )
+                ],
+                [ToolCall(id="2", name="finish", params={"summary": "done"})],
+            ]
+        )
+        result = DiscoveryLoop(llm, ctx, max_steps=5).run("goal")
+        assert result.status is RunStatus.COMPLETED
+        assert result.action_log[0].action == "observe"
+        assert result.action_log[0].status == "success"
+
+
+class TestRedactionToggle:
+    """Redaction is implemented (§8c) but disabled by default "for now"
+    (settings.REDACT) so live agent runs show real values; the suite forces
+    it on (conftest) — this class pins the OFF path."""
+
+    def test_feed_and_evidence_raw_when_redaction_disabled(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        import json
+
+        from bankops import settings as _settings
+        from bankops.evidence.logger import StepLogger
+
+        monkeypatch.setattr(_settings, "REDACT", False)
+        events = []
+        ctx = TestReasoningCapture()._ctx_with_password_field()
+        logger = StepLogger(tmp_path, run_id="r", run_kind="discovery")
+        llm = ScriptedLLM(
+            [
+                [
+                    ToolCall(
+                        id="1",
+                        name="type_text",
+                        params={"index": 0, "text": "s3cret"},
+                        reasoning="typing s3cret now",
+                    )
+                ],
+                [
+                    ToolCall(
+                        id="2",
+                        name="finish",
+                        params={"summary": "used password s3cret"},
+                    )
+                ],
+            ]
+        )
+        result = DiscoveryLoop(
+            llm,
+            ctx,
+            max_steps=5,
+            on_progress=events.append,
+            step_logger=logger,
+        ).run("goal")
+        # Terminal feed, persisted evidence, and the run reason all show
+        # real values when redaction is disabled:
+        assert events[0].reasoning == "typing s3cret now"
+        line = json.loads((tmp_path / "steps.jsonl").read_text().splitlines()[0])
+        assert line["params"]["text"] == "s3cret"
+        assert line["reasoning"] == "typing s3cret now"
+        assert "s3cret" in result.reason
+        summary = logger.write_summary(
+            {"goal": "log in with password s3cret"},
+            mask_values=result.sensitive_values,
+        )
+        assert "s3cret" in summary.read_text()
