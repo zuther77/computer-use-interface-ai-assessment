@@ -242,3 +242,5 @@ class PlaywrightPerceptionAdapter(PerceptionAdapter):
     def current_url(self) -> str:
         return self.page.url
 
+    def navigate(self, url: str) -> None:
+        self.page.goto(url)

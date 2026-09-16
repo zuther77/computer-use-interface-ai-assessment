@@ -1,0 +1,181 @@
+"""Action tool tests (Phase 3; DECISIONS.md §3b, §8a).
+
+Each tool executes correctly against the local static fixture (not live
+ParaBank), including allowlist enforcement at navigate and at every tool
+invocation, and the finish/report_stuck control signals.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from playwright.sync_api import sync_playwright
+
+from bankops.actions.tools import (
+    ToolContext,
+    ToolStatus,
+    click,
+    dispatch,
+    extract,
+    finish,
+    navigate,
+    remember,
+    report_stuck,
+    select_option,
+    type_text,
+)
+from bankops.perception.playwright_adapter import PlaywrightPerceptionAdapter
+from bankops.safety.allowlist import Allowlist, AllowlistViolation
+
+PAGE_ONE = Path(__file__).parent / "fixtures" / "tools_page1.html"
+PAGE_TWO = Path(__file__).parent / "fixtures" / "tools_page2.html"
+
+
+def make_allowlist(**overrides) -> Allowlist:
+    base = dict(
+        domains=["*"],
+        routes=["*"],
+        schemes=["http", "https", "file"],
+        action_types={
+            name: "allow"
+            for name in (
+                "click",
+                "type_text",
+                "select_option",
+                "navigate",
+                "extract",
+                "remember",
+                "finish",
+                "report_stuck",
+            )
+        },
+    )
+    base.update(overrides)
+    return Allowlist(**base)
+
+
+@pytest.fixture()
+def ctx():
+    """A fresh tooled-up context on page one, with a current observation.
+
+    Element indexes on page one (document order):
+      [0] textbox "Amount"     [1] combobox "Mode"
+      [2] button "Apply"       [3] link "Go to page two"
+    """
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+        page.goto(PAGE_ONE.as_uri())
+        context = ToolContext(
+            adapter=PlaywrightPerceptionAdapter(page),
+            allowlist=make_allowlist(),
+        )
+        context.refresh_observation()
+        yield context
+        browser.close()
+
+
+class TestPageActions:
+    def test_type_text_fills_input(self, ctx: ToolContext) -> None:
+        result = type_text(ctx, index=0, text="150.00")
+        assert result.status is ToolStatus.SUCCESS
+        assert ctx.adapter.page.locator("#amount").input_value() == "150.00"
+
+    def test_select_option_by_value(self, ctx: ToolContext) -> None:
+        result = select_option(ctx, index=1, option="slow")
+        assert result.status is ToolStatus.SUCCESS
+        assert ctx.adapter.page.locator("#mode").input_value() == "slow"
+
+    def test_select_option_by_label_fallback(self, ctx: ToolContext) -> None:
+        result = select_option(ctx, index=1, option="Fast Shipping")
+        assert result.status is ToolStatus.SUCCESS
+        assert ctx.adapter.page.locator("#mode").input_value() == "fast"
+
+    def test_click_executes(self, ctx: ToolContext) -> None:
+        result = click(ctx, index=2)
+        assert result.status is ToolStatus.SUCCESS
+        assert ctx.adapter.page.locator("#out").inner_text() == "applied"
+
+    def test_click_navigation_via_link(self, ctx: ToolContext) -> None:
+        result = click(ctx, index=3)
+        assert result.status is ToolStatus.SUCCESS
+        assert ctx.adapter.page.url.endswith("tools_page2.html")
+
+    def test_navigate_moves_to_page_two(self, ctx: ToolContext) -> None:
+        result = navigate(ctx, url=PAGE_TWO.as_uri())
+        assert result.status is ToolStatus.SUCCESS
+        assert ctx.adapter.page.locator("#status").inner_text() == (
+            "You arrived at page two."
+        )
+
+    def test_extract_returns_input_value(self, ctx: ToolContext) -> None:
+        type_text(ctx, index=0, text="99.50")
+        result = extract(ctx, index=0)
+        assert result.status is ToolStatus.SUCCESS
+        assert result.data == "99.50"
+
+    def test_extract_from_non_input_returns_text(self, ctx: ToolContext) -> None:
+        extract(ctx, index=0)  # ensure page state settled
+        result = extract(ctx, index=2)  # "Apply" button
+        assert result.status is ToolStatus.SUCCESS
+        assert result.data == "Apply"
+
+
+class TestMemoryAndControlSignals:
+    def test_remember_persists_in_context(self, ctx: ToolContext) -> None:
+        result = remember(ctx, key="customer_id", value="12345")
+        assert result.status is ToolStatus.SUCCESS
+        assert ctx.memory == {"customer_id": "12345"}
+
+    def test_finish_signal(self, ctx: ToolContext) -> None:
+        result = finish(ctx, summary="Transferred $150 from checking to savings")
+        assert result.status is ToolStatus.FINISHED
+        assert "Transferred" in result.message
+
+    def test_report_stuck_signal(self, ctx: ToolContext) -> None:
+        result = report_stuck(ctx, reason="Transfer page never loads")
+        assert result.status is ToolStatus.STUCK
+        assert result.message == "Transfer page never loads"
+
+
+class TestAllowlistEnforcement:
+    def test_navigate_denied_domain(self, ctx: ToolContext) -> None:
+        ctx.allowlist = make_allowlist(
+            domains=["localhost:8080"], routes=["/parabank/*"]
+        )
+        with pytest.raises(AllowlistViolation, match="domain"):
+            navigate(ctx, url="http://evil.com/parabank/index.htm")
+
+    def test_action_type_denied_at_invocation(self, ctx: ToolContext) -> None:
+        ctx.allowlist = make_allowlist(action_types={"click": "allow"})
+        with pytest.raises(AllowlistViolation, match="'type_text'"):
+            type_text(ctx, index=0, text="x")
+
+
+class TestErrorHandling:
+    def test_bad_index_returns_error_result(self, ctx: ToolContext) -> None:
+        result = dispatch(ctx, "click", {"index": 99})
+        assert result.status is ToolStatus.ERROR
+        assert "no element at index 99" in result.message
+
+    def test_acting_without_observation_errors(self, ctx: ToolContext) -> None:
+        ctx.observation = None
+        result = dispatch(ctx, "click", {"index": 0})
+        assert result.status is ToolStatus.ERROR
+        assert "no current observation" in result.message
+
+    def test_dispatch_unknown_action(self, ctx: ToolContext) -> None:
+        result = dispatch(ctx, "explode", {})
+        assert result.status is ToolStatus.ERROR
+        assert "unknown action type" in result.message
+
+    def test_dispatch_bad_params(self, ctx: ToolContext) -> None:
+        result = dispatch(ctx, "type_text", {"index": 0})  # missing text
+        assert result.status is ToolStatus.ERROR
+        assert "invalid parameters" in result.message
+
+    def test_dispatch_routes_to_tools(self, ctx: ToolContext) -> None:
+        result = dispatch(ctx, "remember", {"key": "k", "value": "v"})
+        assert result.status is ToolStatus.SUCCESS
+        assert ctx.memory == {"k": "v"}

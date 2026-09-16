@@ -23,3 +23,11 @@ LLM_MODEL = os.environ.get("LLM_MODEL", "glm-5.2")
 
 # Max discovery-loop steps before a typed max-steps halt (DECISIONS.md §3d).
 MAX_STEPS = int(os.environ.get("BANKOPS_MAX_STEPS", "40"))
+
+# Two-dimensional allowlist config (DECISIONS.md §8a).
+from pathlib import Path  # noqa: E402
+
+ALLOWLIST_PATH = os.environ.get(
+    "BANKOPS_ALLOWLIST_PATH",
+    str(Path(__file__).resolve().parents[1] / "config" / "allowlist.yaml"),
+)

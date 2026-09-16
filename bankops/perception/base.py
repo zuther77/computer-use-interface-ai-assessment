@@ -102,5 +102,10 @@ class PerceptionAdapter(ABC):
         visible/enabled element") is checked by the caller (replay's
         first-unique-match rule, §6a)."""
 
+    @abstractmethod
+    def navigate(self, url: str) -> None:
+        """Navigate the surface to a URL (the navigate tool's surface call;
+        allowlist enforcement happens at the tool layer, §8a)."""
+
     def current_url(self) -> str:
         raise NotImplementedError
