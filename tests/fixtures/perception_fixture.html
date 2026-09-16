@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Parabank Fixture — Accounts</title>
+</head>
+<body>
+  <h1>Accounts Overview</h1>
+  <form id="loginForm">
+    <label for="username">Username</label>
+    <input id="username" name="username" type="text">
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password">
+    <button type="submit" id="login-btn">Log In</button>
+  </form>
+  <a href="/register" id="register-link">Register</a>
+  <a href="/details/1">More Info</a>
+  <a href="/details/2">More Info</a>
+  <label for="account">Account</label>
+  <select id="account" name="account">
+    <option value="10001">10001</option>
+    <option value="10002">10002</option>
+  </select>
+  <label><input type="checkbox" id="agree"> I agree</label>
+  <input type="radio" name="account_type" value="checking">
+  <button id="hidden-btn" style="display: none">Hidden</button>
+</body>
+</html>
