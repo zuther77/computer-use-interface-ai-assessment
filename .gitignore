@@ -1,0 +1,22 @@
+# Git-ignored: never commit real credentials.
+.env
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.venv/
+
+# Playwright
+.playwright/
+
+# Run artifacts — directories exist in git, contents are ignored (Phase 0)
+/evidence/*
+!/evidence/.gitkeep
+/pending_interventions/*
+!/pending_interventions/.gitkeep

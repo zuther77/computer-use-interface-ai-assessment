@@ -1,0 +1,24 @@
+# Two-dimensional allowlist (DECISIONS.md §8a), enforced in Phase 3:
+#   - domains/routes checked at `navigate`
+#   - action types checked at every tool invocation
+# Declarative and reviewable — no arbitrary policy code.
+
+domains:
+  # Local self-hosted ParaBank only (DECISIONS.md §1).
+  - "localhost:8080"
+  - "127.0.0.1:8080"
+
+routes:
+  # Route prefixes permitted under any allowed domain.
+  - "/parabank/"
+  - "/parabank/*"
+
+action_types:
+  click: allow
+  type_text: allow
+  select_option: allow
+  navigate: allow
+  extract: allow
+  remember: allow
+  finish: allow
+  report_stuck: allow

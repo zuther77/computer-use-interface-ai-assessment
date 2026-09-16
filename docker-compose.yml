@@ -1,0 +1,10 @@
+services:
+  parabank:
+    # Local ParaBank instance (DECISIONS.md §1) — self-hosted via the official
+    # Parasoft image so evidence runs stay reproducible (the public hosted
+    # instance resets its DB and shares QA traffic).
+    image: parasoft/parabank:latest
+    container_name: bankops-parabank
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
