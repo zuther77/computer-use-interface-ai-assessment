@@ -34,6 +34,7 @@ from bankops.actions.tools import (
     ToolStatus,
     dispatch,
 )
+from bankops.artifact.models import LocatorCandidate
 from bankops.perception.base import Observation
 from bankops.safety.allowlist import AllowlistViolation
 
@@ -117,7 +118,11 @@ class RunStatus(str, Enum):
 class ActionLogEntry(BaseModel):
     """One executed (or attempted) action in the raw action log. Values are
     held raw in memory for the recorder (§5b); redaction is applied by the
-    evidence writer before anything is persisted (§8c)."""
+    evidence writer before anything is persisted (§8c).
+
+    The element/checkpoint fields are captured passively per action so the
+    recorder (§4c/4d/4e) can build candidate locators, label-derived
+    parameter names, and per-step signatures from the raw log alone."""
 
     step: int
     action: str
@@ -127,6 +132,12 @@ class ActionLogEntry(BaseModel):
     data: str | None = None
     element_index: int | None = None
     url: str = ""
+    page_title: str = ""
+    page_identity: str = ""
+    observation_hash: str = ""
+    element_role: str = ""
+    element_name: str = ""
+    locator_candidates: list[LocatorCandidate] = Field(default_factory=list)
 
 
 class RunResult(BaseModel):
@@ -187,10 +198,10 @@ class DiscoveryLoop:
     def run(self, goal: str) -> RunResult:
         self._goal = goal
         self.ctx.refresh_observation()
-        last_hash = self.ctx.observation.observation_hash
         consecutive_stale = 0
 
         for step in range(1, self.max_steps + 1):
+            step_start_hash = self.ctx.observation.observation_hash
             calls = self.client.decide(self._build_messages(goal))
 
             if not calls:
@@ -202,6 +213,9 @@ class DiscoveryLoop:
                         status="error",
                         message="model returned no tool call",
                         url=self.ctx.adapter.current_url(),
+                        page_title=self.ctx.observation.title,
+                        page_identity=self.ctx.observation.page_identity,
+                        observation_hash=step_start_hash,
                     )
                 )
                 consecutive_stale += 1
@@ -211,6 +225,16 @@ class DiscoveryLoop:
 
             page_affecting_attempt = False
             for call in calls:
+                # Capture the acted-on element from the *pre-action*
+                # observation (§3a) — its name and candidate locators are
+                # what the recorder later turns into artifact steps (§4b/§4c).
+                pre_observation = self.ctx.observation
+                index = call.params.get("index")
+                element = (
+                    pre_observation.element_by_index(index)
+                    if isinstance(index, int)
+                    else None
+                )
                 try:
                     result = dispatch(self.ctx, call.name, call.params)
                 except AllowlistViolation as exc:
@@ -222,6 +246,7 @@ class DiscoveryLoop:
                         status=ToolStatus.ERROR,
                         message=f"blocked by allowlist: {exc}",
                     )
+                post_observation = self.ctx.refresh_observation()
                 self.action_log.append(
                     ActionLogEntry(
                         step=step,
@@ -231,28 +256,33 @@ class DiscoveryLoop:
                         message=result.message,
                         data=result.data,
                         element_index=result.element_index,
-                        url=self.ctx.adapter.current_url(),
+                        url=post_observation.url,
+                        page_title=post_observation.title,
+                        page_identity=post_observation.page_identity,
+                        observation_hash=post_observation.observation_hash,
+                        element_role=element.role if element else "",
+                        element_name=element.name if element else "",
+                        locator_candidates=(
+                            [c.model_copy() for c in element.locators]
+                            if element
+                            else []
+                        ),
                     )
                 )
                 if call.name in _PAGE_AFFECTING:
                     page_affecting_attempt = True
                 if result.status is ToolStatus.FINISHED:
-                    self.ctx.refresh_observation()
                     return self._result(RunStatus.COMPLETED, result.message)
                 if result.status is ToolStatus.STUCK:
-                    self.ctx.refresh_observation()
                     return self._result(RunStatus.STUCK, result.message)
 
             # No-progress detection (§3d): a page-affecting action whose
             # post-action observation hash is identical, N steps in a row.
-            self.ctx.refresh_observation()
-            new_hash = self.ctx.observation.observation_hash
             if page_affecting_attempt:
-                if new_hash == last_hash:
+                if self.ctx.observation.observation_hash == step_start_hash:
                     consecutive_stale += 1
                 else:
                     consecutive_stale = 0
-            last_hash = new_hash
             if consecutive_stale >= self.no_progress_limit:
                 return self._result(
                     RunStatus.NO_PROGRESS,
@@ -274,3 +304,4 @@ class DiscoveryLoop:
             memory=dict(self.ctx.memory),
             final_observation=self.ctx.observation,
         )
+
