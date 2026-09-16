@@ -244,3 +244,9 @@ class PlaywrightPerceptionAdapter(PerceptionAdapter):
 
     def navigate(self, url: str) -> None:
         self.page.goto(url)
+
+    def close(self) -> None:
+        try:
+            self.page.close()
+        except Exception:
+            pass  # session already gone — teardown must never mask results

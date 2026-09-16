@@ -109,3 +109,8 @@ class PerceptionAdapter(ABC):
 
     def current_url(self) -> str:
         raise NotImplementedError
+
+    def close(self) -> None:
+        """Tear down the per-invocation session (DECISIONS.md §6d). Default
+        no-op; concrete adapters close their page/context. Not called on
+        the escalation exit path, where the session must stay alive (§9b)."""
