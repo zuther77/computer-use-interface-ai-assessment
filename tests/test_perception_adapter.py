@@ -77,6 +77,11 @@ class TestCandidateLocators:
         assert [(c.strategy, c.value) for c in username.locators] == [
             (LocatorStrategy.ROLE_NAME, 'role=textbox name="Username"'),
             (LocatorStrategy.ID_ATTRIBUTE, "#username"),
+            # The stable name-attribute candidate is emitted alongside the
+            # id (not as an elif): an id can be ephemeral — ParaBank's
+            # bill-pay phone input gets a fresh random UUID id each render —
+            # so replay's first-unique-match needs a durable fallback.
+            (LocatorStrategy.ID_ATTRIBUTE, 'input[name="username"]'),
             (LocatorStrategy.CSS_STRUCTURAL, "body > form > input:nth-of-type(1)"),
         ]
 
@@ -196,7 +201,13 @@ class TestLegacyTableLayouts:
         # restore the fixture page afterwards regardless.
         page = adapter.page
         page.set_content(
-            "<html><body><h2>Transfer Funds</h2>"
+            "<html><body>"
+            "<h2>Account Services</h2>"
+            "<h1 class='title'>Loan Request Processed</h1>"
+            "<p class='error'>We cannot grant a loan in that amount with "
+            "your available funds.</p>"
+            "<p>Congratulations, your account has been opened.</p>"
+            "<p>Footer with a <a href='#'>link</a> is not a message.</p>"
             "<form><p><b>Username</b></p>"
             "<div class='login'><input name='username'></div>"
             "<p><b>Amount:</b> $<input id='amount'></p>"
@@ -206,6 +217,22 @@ class TestLegacyTableLayouts:
         )
         try:
             observation = adapter.observe()
+            # Content-heading identity preferred over the sidebar heading:
+            assert observation.page_identity == "Loan Request Processed"
+            # Outcome text is visible to the model (the live failure: a
+            # loan-denied banner the observation structurally could not
+            # contain, so the agent called finish on a denial):
+            assert "We cannot grant a loan" in " ".join(observation.messages)
+            assert "Congratulations" in " ".join(observation.messages)
+            # Error-classed messages are tracked separately and flagged:
+            assert observation.error_messages == [
+                "We cannot grant a loan in that amount with your "
+                "available funds."
+            ]
+            rendered = observation.render()
+            assert "Error: We cannot grant a loan" in rendered
+            assert "Message: Congratulations" in rendered
+            assert "not a message" not in " ".join(observation.messages)
             names = {(e.role, e.name) for e in observation.elements}
             # Real ParaBank patterns, verified by live DOM probes:
             assert ("textbox", "Username") in names      # <p><b> above a login div
@@ -222,5 +249,91 @@ class TestLegacyTableLayouts:
             )
             assert from_select.options == ["12345"]
             assert "(options: 12345)" in observation.render()
+        finally:
+            page.goto(FIXTURE.as_uri())
+
+
+    def test_dropdown_options_not_truncated_for_long_lists(self, adapter) -> None:
+        """Regression (observed live): the options exposure capped at 12 —
+        ParaBank lists accounts ascending by id, so the newly created
+        account (the goal's target!) sorted last and was sliced off. The
+        model concluded a 'contradiction in the environment' and stalled.
+        The cap now comfortably covers real account lists."""
+
+        page = adapter.page  # module fixture; restore its page after
+        options = "".join(
+            f"<option>{12300 + i * 111}</option>" for i in range(15)
+        )
+        page.set_content(
+            "<html><body><h1 class='title'>Request Loan</h1>"
+            f"<div>From account #<select id='from'>{options}</select></div>"
+            "</body></html>"
+        )
+        try:
+            observation = adapter.observe()
+            select = next(
+                e for e in observation.elements if e.name == "From account #"
+            )
+            assert len(select.options) == 15
+            # The LAST option — a freshly created, highest-id account —
+            # must be visible to the model:
+            assert select.options[-1] == str(12300 + 14 * 111)
+            assert str(12300 + 14 * 111) in observation.render()
+        finally:
+            page.goto(FIXTURE.as_uri())
+
+
+    def test_random_uuid_id_and_name_fallback_candidates(self, adapter) -> None:
+        """Regression (observed live): ParaBank's bill-pay page gives the
+        phone input a random UUID id each render — a digit-leading UUID
+        made '#<uuid>' INVALID CSS and killed the action outright. Ids
+        that are not safe CSS identifiers must use the attribute form, and
+        the stable name-attribute candidate must be emitted alongside the
+        (ephemeral) id so replay has a durable fallback."""
+
+        page = adapter.page  # module fixture; restore its page after
+        page.set_content(
+            "<html><body><h1 class='title'>Bill Payment Service</h1>"
+            "<form>"
+            "<div><b>Payee name</b>: <input id='payeeName'></div>"
+            "<div><b>Phone #</b>: <input id='12494cd6-a38a-45f9-9179-28ef1129a9de'"
+            " name='payee.phoneNumber'></div>"
+            "</form></body></html>"
+        )
+        try:
+            observation = adapter.observe()
+            phone = next(
+                e for e in observation.elements if "Phone" in (e.name or "")
+            )
+            id_candidates = [
+                c.value
+                for c in phone.locators
+                if c.strategy.value == "id_attribute"
+            ]
+            # Safe ids keep the readable '#id' form...
+            payee = next(
+                e for e in observation.elements if e.name == "Payee name"
+            )
+            assert any(
+                c.value == "#payeeName" for c in payee.locators
+            )
+            # ...digit-leading UUID ids use the always-valid attribute form,
+            assert '[id="12494cd6-a38a-45f9-9179-28ef1129a9de"]' in (
+                id_candidates
+            )
+            # and the stable name candidate is emitted alongside the
+            # ephemeral id (not as an elif):
+            assert 'input[name="payee.phoneNumber"]' in id_candidates
+            # No candidate throws; the attribute candidates resolve
+            # uniquely. The role_name candidate may legitimately resolve 0
+            # here — the adapter's heuristic accessible name can differ
+            # from Playwright's own a11y name for label-less inputs, and
+            # first-unique-match falls through, exactly as observed live
+            # on this field.
+            for candidate in phone.locators:
+                locator = adapter.resolve_locator(candidate)
+                if candidate.strategy.value == "role_name":
+                    continue
+                assert locator.count() == 1
         finally:
             page.goto(FIXTURE.as_uri())

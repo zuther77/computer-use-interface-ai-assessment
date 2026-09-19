@@ -651,6 +651,9 @@ class TestProgressEvents:
         assert 'You said: "Let me look at the current page state"' in second_content
         assert "IS the live page state" in second_content
         assert "`observe`" in second_content
+        # Terminal-choice framing (observed live: the model deliberated in
+        # prose about whether a denied loan 'counts' as goal-complete):
+        assert "final business decision" in second_content
 
     def test_observe_dispatches_through_the_loop(self) -> None:
         ctx = make_ctx([make_observation()])

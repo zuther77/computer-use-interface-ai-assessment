@@ -94,10 +94,34 @@ class Checkpoint(BaseModel):
     stable page-identity signal (e.g. the key element/heading that proves
     the page actually progressed). Captured passively during observation —
     implicit success ("all steps ran") is exactly the "assumed the click
-    worked" mistake this exists to prevent."""
+    worked" mistake this exists to prevent.
+
+    ``allowed_error_messages`` records any error-classed page messages the
+    success path itself showed (normally empty): at replay time, an
+    error-classed message that the recording did not have means the step
+    did NOT land in the recorded state — observed live when a swapped
+    date-range replay showed ParaBank's 'Invalid date format' error while
+    every URL/heading checkpoint still matched.
+    """
 
     url: str
     page_identity: str = Field(min_length=1)
+    allowed_error_messages: list[str] = Field(default_factory=list)
+    required_locator: LocatorCandidate | None = Field(
+        default=None,
+        description=(
+            "Deliberate, goal-tied content check (§4e's 'one deliberate "
+            "terminal checkpoint tied to the goal'): an element that MUST "
+            "be present for the page state to count as the recorded one — "
+            "e.g. a results-table link after a search step. Manually "
+            "authored at artifact-authoring time (same deliberate-capture "
+            "philosophy as §7a signatures and §8b risk tags), never "
+            "auto-inferred: guessing 'what the goal implies' from page "
+            "content would be the fuzzy detection §7a rejects. Closes the "
+            "gap observed live: a swapped-dates replay changed no URL/"
+            "heading/error signal, silently returning a wrong result set."
+        ),
+    )
 
 
 class OutcomeSignature(BaseModel):

@@ -266,3 +266,104 @@ class TestStrictTrigger:
             ActionType.CLICK,
             ActionType.EXTRACT,
         ]
+
+
+class TestObserveEntriesDistilledOut:
+    """Regression (observed live, twice): a completed run containing
+    successful `observe` actions crashed distillation with
+    ``ValueError: 'observe' is not a valid ActionType`` — no artifact was
+    saved from either run. Observe is a perception aid, not a capability
+    step (§3d class, like remember): it must be filtered out, and the
+    artifact must contain only recorded page-interacting steps."""
+
+    def test_observe_entries_are_dropped_not_crashed(self) -> None:
+        from bankops.agent.loop import ActionLogEntry, RunResult, RunStatus
+        from bankops.artifact.recorder import distill
+
+        def entry(step, action, **kw):
+            base = dict(
+                step=step,
+                action=action,
+                status="success",
+                url="http://localhost:8080/parabank/requestloan.htm",
+                page_title="ParaBank | Request Loan",
+                page_identity="Apply for a Loan",
+            )
+            base.update(kw)
+            return ActionLogEntry(**base)
+
+        run = RunResult(
+            status=RunStatus.COMPLETED,
+            goal="request a loan",
+            reason="done",
+            action_log=[
+                entry(
+                    1,
+                    "type_text",
+                    params={"index": 3, "text": "45000"},
+                    data="45000",
+                    element_index=3,
+                    element_role="textbox",
+                    element_name="Loan Amount: $",
+                ),
+                entry(2, "observe", params={}),
+                entry(3, "finish", params={"summary": "done"}),
+            ],
+        )
+        artifact = distill(run, name="loan_request")
+        assert artifact is not None
+        # No crash, and observe never appears as a step:
+        assert [s.action.value for s in artifact.steps] == ["type_text"]
+        assert [i.name for i in artifact.inputs] == ["loan_amount"]
+        # The finish entry still supplies the terminal checkpoint:
+        assert artifact.terminal_checkpoint.url.endswith("requestloan.htm")
+
+
+class TestCheckpointErrorRecording:
+    """§4e: checkpoints must carry the error-classed messages the recorded
+    success path showed (normally none) so replay can distinguish the
+    recorded state from an error state with identical URL/heading."""
+
+    def test_recorder_populates_allowed_error_messages(self) -> None:
+        from bankops.agent.loop import ActionLogEntry, RunResult, RunStatus
+        from bankops.artifact.recorder import distill
+
+        def entry(step, action, **kw):
+            base = dict(
+                step=step,
+                action=action,
+                status="success",
+                url="http://localhost:8080/parabank/findtrans.htm",
+                page_title="ParaBank | Find Transactions",
+                page_identity="Find Transactions",
+                error_messages=[],
+            )
+            base.update(kw)
+            return ActionLogEntry(**base)
+
+        run = RunResult(
+            status=RunStatus.COMPLETED,
+            goal="find transactions",
+            reason="done",
+            action_log=[
+                entry(
+                    1,
+                    "type_text",
+                    params={"index": 7, "text": "01-01-2000"},
+                    data="01-01-2000",
+                    element_index=7,
+                    element_role="textbox",
+                    element_name="Between",
+                    # The recorded success path showed a tolerated error:
+                    error_messages=["Some tolerated notice"],
+                ),
+                entry(2, "finish", params={"summary": "done"}),
+            ],
+        )
+        artifact = distill(run, name="find_transactions")
+        assert artifact is not None
+        assert artifact.steps[0].checkpoint.allowed_error_messages == [
+            "Some tolerated notice"
+        ]
+        # Terminal checkpoint recorded from the finish entry too:
+        assert artifact.terminal_checkpoint.allowed_error_messages == []

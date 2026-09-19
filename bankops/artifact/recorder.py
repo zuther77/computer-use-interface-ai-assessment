@@ -60,11 +60,17 @@ def distill(
 
     # -- Step 1: successful page-interacting entries only -------------------
     # remember is internal working memory (§4d), never an artifact step;
-    # finish is the terminal signal, kept aside for the terminal checkpoint.
+    # observe is a perception aid (the same non-page-affecting §3d class),
+    # also never an artifact step; finish is the terminal signal, kept
+    # aside for the terminal checkpoint. Any successful action that is not
+    # a recorded ActionType MUST be dropped here — observed live: `observe`
+    # entries reached ActionType() downstream and crashed distillation,
+    # costing two completed runs their artifacts.
+    _NON_STEP_ACTIONS = ("remember", "observe")
     flow = [
         e
         for e in result.action_log
-        if e.status == "success" and e.action not in ("remember",)
+        if e.status == "success" and e.action not in _NON_STEP_ACTIONS
     ]
     finish_entry = next(
         (e for e in reversed(flow) if e.action == "finish"), None
@@ -105,6 +111,7 @@ def distill(
             page_identity=(
                 entry.page_identity or entry.page_title or "unknown page"
             ),
+            allowed_error_messages=list(entry.error_messages),
         )
         action = ActionType(entry.action)
         if action is ActionType.NAVIGATE:
@@ -192,6 +199,9 @@ def distill(
             url=terminal.url,
             page_identity=(
                 terminal.page_identity or terminal.page_title or "unknown page"
+            ),
+            allowed_error_messages=list(
+                getattr(terminal, "error_messages", [])
             ),
         ),
         risk_level=risk_level,

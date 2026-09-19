@@ -422,3 +422,222 @@ class TestCheckpointSettleRetry:
         assert result.status == "failure"
         assert result.reason == "checkpoint_mismatch"
         assert "Account Services" in result.expected
+
+
+class TestErrorBannersInvalidateCheckpoints:
+    """Regression (observed live): a replay with swapped date params showed
+    ParaBank's 'Invalid date format' error, yet every URL/heading checkpoint
+    matched and the run was classified SUCCESS. Checkpoints must fail on an
+    error-classed page message the recorded success path did not have —
+    with the actual page text carried in FailureResult.observed."""
+
+    def _page_and_engine(self, page, error_text):
+        from bankops.perception.playwright_adapter import (
+            PlaywrightPerceptionAdapter,
+        )
+        from bankops.replay.engine import ReplayEngine
+
+        page.set_content(
+            "<html><body>"
+            "<h1 class='title'>Find Transactions</h1>"
+            "<button id='go' onclick=\""
+            f"document.getElementById('err').textContent='{error_text}'\">"
+            "Find Transactions</button>"
+            f"<span id='err' class='error'></span>"
+            "</body></html>"
+        )
+        return ReplayEngine(
+            PlaywrightPerceptionAdapter(page),
+            retry_delays=(0.0,),
+        )
+
+    def _artifact(self, allowed_errors=None):
+        from bankops.artifact.models import (
+            ActionType,
+            Artifact,
+            Checkpoint,
+            InputParam,
+            LocatorCandidate,
+            LocatorStrategy,
+            RiskLevel,
+            Step,
+        )
+
+        checkpoint = Checkpoint(
+            url="about:blank",
+            page_identity="Find Transactions",
+            allowed_error_messages=list(allowed_errors or []),
+        )
+        return Artifact(
+            name="check_transactions",
+            goal="find transactions",
+            steps=[
+                Step(
+                    action=ActionType.CLICK,
+                    locator_candidates=[
+                        LocatorCandidate(
+                            strategy=LocatorStrategy.ID_ATTRIBUTE, value="#go"
+                        )
+                    ],
+                    checkpoint=checkpoint,
+                )
+            ],
+            terminal_checkpoint=checkpoint,
+            risk_level=RiskLevel.READ_ONLY,
+        )
+
+    def test_error_banner_after_action_is_failure_not_success(self) -> None:
+        from playwright.sync_api import sync_playwright
+        from bankops.replay.results import FailureResult, SuccessResult
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch()
+            page = browser.new_page()
+            engine = self._page_and_engine(page, "Invalid date format")
+            result = engine.execute(self._artifact(), params={})
+            browser.close()
+        assert isinstance(result, FailureResult)
+        assert result.reason == "checkpoint_mismatch"
+        assert result.failed_step == 0
+        assert "Invalid date format" in result.observed
+
+    def test_recorded_allowed_error_is_tolerated(self) -> None:
+        """A flow that legitimately recorded the same error-classed message
+        (§4e allowed_error_messages) still succeeds."""
+        from playwright.sync_api import sync_playwright
+        from bankops.replay.results import SuccessResult
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch()
+            page = browser.new_page()
+            engine = self._page_and_engine(page, "Invalid date format")
+            result = engine.execute(
+                self._artifact(allowed_errors=["Invalid date format"]),
+                params={},
+            )
+            browser.close()
+        assert isinstance(result, SuccessResult)
+
+    def test_clean_page_still_succeeds(self) -> None:
+        from playwright.sync_api import sync_playwright
+        from bankops.replay.results import SuccessResult
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch()
+            page = browser.new_page()
+            engine = self._page_and_engine(page, "Invalid date format")
+            # No click -> the error span never fills; no errors observed.
+            from bankops.perception.playwright_adapter import (
+                PlaywrightPerceptionAdapter,
+            )
+            from bankops.replay.engine import checkpoint_matches
+
+            observation = PlaywrightPerceptionAdapter(page).observe()
+            assert observation.error_messages == []
+            assert checkpoint_matches(self._artifact().steps[0].checkpoint, observation)
+            browser.close()
+
+
+class TestRequiredLocator:
+    """§4e deliberate goal-tied content check: a manually-authored
+    required_locator on a checkpoint must resolve to at least one element
+    for the page state to count as the recorded one — observed live: a
+    swapped-dates replay changed no URL/heading/error signal and silently
+    classified as success."""
+
+    def _page(self, page, with_result: bool) -> None:
+        rows = (
+            "<a href='/transaction.htm?id=1'>Check # 1111</a>"
+            if with_result
+            else ""
+        )
+        page.set_content(
+            "<html><body>"
+            "<h1 class='title'>Find Transactions</h1>"
+            "<button id='go'>Find Transactions</button>"
+            f"{rows}"
+            "</body></html>"
+        )
+
+    def _artifact(self):
+        from bankops.artifact.models import (
+            ActionType,
+            Artifact,
+            Checkpoint,
+            LocatorCandidate,
+            LocatorStrategy,
+            RiskLevel,
+            Step,
+        )
+
+        checkpoint = Checkpoint(
+            url="about:blank",
+            page_identity="Find Transactions",
+            required_locator=LocatorCandidate(
+                strategy=LocatorStrategy.CSS_STRUCTURAL,
+                value="a[href*='transaction.htm?id=']",
+            ),
+        )
+        return Artifact(
+            name="check_transactions",
+            goal="find transactions",
+            # A real first step (the schema requires >=1 step): a no-op
+            # click whose own plain checkpoint must pass either way — the
+            # goal-tied required_locator lives on the terminal checkpoint.
+            steps=[
+                Step(
+                    action=ActionType.CLICK,
+                    locator_candidates=[
+                        LocatorCandidate(
+                            strategy=LocatorStrategy.ID_ATTRIBUTE, value="#go"
+                        )
+                    ],
+                    checkpoint=Checkpoint(
+                        url="about:blank",
+                        page_identity="Find Transactions",
+                    ),
+                )
+            ],
+            terminal_checkpoint=checkpoint,
+            risk_level=RiskLevel.READ_ONLY,
+        )
+
+    def test_missing_required_locator_fails_terminal_check(self) -> None:
+        from playwright.sync_api import sync_playwright
+        from bankops.perception.playwright_adapter import (
+            PlaywrightPerceptionAdapter,
+        )
+        from bankops.replay.engine import ReplayEngine
+        from bankops.replay.results import FailureResult
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch()
+            page = browser.new_page()
+            self._page(page, with_result=False)
+            engine = ReplayEngine(
+                PlaywrightPerceptionAdapter(page), retry_delays=(0.0,)
+            )
+            result = engine.execute(self._artifact(), params={})
+            browser.close()
+        assert isinstance(result, FailureResult)
+        assert result.reason == "terminal_checkpoint_mismatch"
+        assert "required_locator" in result.expected
+
+    def test_present_required_locator_passes(self) -> None:
+        from playwright.sync_api import sync_playwright
+        from bankops.perception.playwright_adapter import (
+            PlaywrightPerceptionAdapter,
+        )
+        from bankops.replay.engine import ReplayEngine
+        from bankops.replay.results import SuccessResult
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch()
+            page = browser.new_page()
+            self._page(page, with_result=True)
+            engine = ReplayEngine(
+                PlaywrightPerceptionAdapter(page), retry_delays=(0.0,)
+            )
+            result = engine.execute(self._artifact(), params={})
+            browser.close()
+        assert isinstance(result, SuccessResult)

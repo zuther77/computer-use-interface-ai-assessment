@@ -66,6 +66,35 @@ def _print_replay_result(result) -> int:
     return 1
 
 
+def _run_handoff_cli(adapter, request, *, expected_checkpoint=None) -> None:
+    """The real §9b handoff: stop issuing commands on the headed browser
+    and block for a human resume signal written to
+    ``pending_interventions/{id}.resume`` (verify / continue /
+    mark_complete / abandon). Documented cut: the CLI records the human's
+    decision and the §9d human-turn log, but does not resurrect the
+    loop/engine mid-run — the run stays halted with its typed reason."""
+    from bankops.escalation.handoff import FileResumeWaiter, HandoffManager
+
+    print(
+        f"[handoff] the browser window is yours — automation is paused "
+        f"(request {request.id})."
+    )
+    print(
+        "[handoff] to resume, write one of verify | continue | "
+        f"mark_complete | abandon to pending_interventions/{request.id}.resume"
+    )
+    outcome = HandoffManager(adapter).run_handoff(
+        request,
+        wait_for_resume=FileResumeWaiter(adapter),
+        expected_checkpoint=expected_checkpoint,
+    )
+    print(
+        f"[handoff] decision: {outcome.action.value} "
+        f"(verified={outcome.verified}) — human turn logged to "
+        f"pending_interventions/{request.id}.human_log.json"
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     _load_env_file()
     parser = argparse.ArgumentParser(
@@ -168,13 +197,17 @@ def main(argv: list[str] | None = None) -> int:
                         line += f"  ·  {event.page}"
                     print(line, flush=True)
                     if event.reasoning:
-                        print(f"        ↳ {event.reasoning}", flush=True)
+                        # No-call responses can carry long deliberation
+                        # dumps — keep the operator feed one line.
+                        print(
+                            f"        ↳ {event.reasoning[:240]}", flush=True
+                        )
                     if event.status == "error" and event.message:
                         print(f"        ! {event.message[:140]}", flush=True)
 
                 print(f"[discover] run {run_id}: {args.goal}", flush=True)
                 try:
-                    result, artifact = run_discovery(
+                    result, artifact, request = run_discovery(
                         args.goal,
                         artifact_name=args.name,
                         adapter=adapter,
@@ -207,12 +240,27 @@ def main(argv: list[str] | None = None) -> int:
                         "[discover] no artifact saved "
                         "(runs only distill when they end via finish)"
                     )
+                if request is not None:
+                    print(
+                        f"[discover] INTERVENTION RAISED — "
+                        f"pending_interventions/{request.id}.json "
+                        f"(reason: {request.reason[:120]})"
+                    )
+                    if args.headed:
+                        # §9b: real handoff on the same live session.
+                        _run_handoff_cli(adapter, request)
+                    else:
+                        print(
+                            "[discover] headless run: the session has "
+                            "closed; the pending request documents the "
+                            "stop for a human."
+                        )
                 return 0 if result.status.value == "completed" else 1
 
             artifact = Artifact.load(args.artifact)
             run_id = args.run_id or _new_run_id("replay")
             try:
-                result = run_replay(
+                result, request = run_replay(
                     artifact,
                     _parse_params(args.param),
                     adapter=adapter,
@@ -232,6 +280,20 @@ def main(argv: list[str] | None = None) -> int:
             code = _print_replay_result(result)
             folder = "replay_error" if result.status != "success" else "replay_success"
             print(f"[replay] evidence: evidence/{folder}_{run_id}/")
+            if request is not None:
+                print(
+                    f"[replay] INTERVENTION RAISED — "
+                    f"pending_interventions/{request.id}.json"
+                )
+                if args.headed:
+                    # §9c: verify re-checks the failed step's checkpoint.
+                    expected = None
+                    if (
+                        result.failed_step is not None
+                        and 0 <= result.failed_step < len(artifact.steps)
+                    ):
+                        expected = artifact.steps[result.failed_step].checkpoint
+                    _run_handoff_cli(adapter, request, expected_checkpoint=expected)
             return code
         finally:
             browser.close()

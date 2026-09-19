@@ -75,8 +75,18 @@ def _resolve_unique(ctx: ToolContext, index: int):
         )
     attempts: list[str] = []
     for candidate in element.locators:
-        locator = ctx.adapter.resolve_locator(candidate)
-        count = locator.count()
+        try:
+            locator = ctx.adapter.resolve_locator(candidate)
+            count = locator.count()
+        except Exception as exc:
+            # A malformed/throwing candidate must never kill the action:
+            # fall through to the element's next candidate (§4b/§6a parity
+            # with the replay engine). Observed live: ParaBank's bill-pay
+            # phone input carries a random digit-leading UUID id whose
+            # '#...' candidate is invalid CSS — the whole action failed
+            # instead of using the element's remaining valid candidates.
+            attempts.append(f"{candidate.strategy.value}: {exc}")
+            continue
         if count == 1:
             return element, candidate, locator
         attempts.append(f"{candidate.strategy.value} matched {count}")

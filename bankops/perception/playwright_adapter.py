@@ -142,10 +142,40 @@ _OBSERVE_JS = r"""
     'a[href], button, input, select, textarea, [role]'
   ));
   const visible = all.filter((el) => el.getClientRects().length > 0);
-  const heading = document.querySelector('h1, h2, h3');
+  // Identity (§4e): prefer the page's own content heading — ParaBank marks
+  // it h1.title ("Loan Request Processed", "Account Opened"); the first
+  // h1-h3 in DOM order is otherwise the shared sidebar "Account Services",
+  // which distinguishes nothing.
+  const titleHeading = document.querySelector('h1.title');
+  const heading = titleHeading || document.querySelector('h1, h2, h3');
+  // Visible outcome/status text a human operator would read (denial
+  // banners, confirmations) — non-interactive, short, deduped; elements
+  // containing links/controls are skipped because those are already
+  // indexed elements.
+  const messages = [];
+  const errorMessages = [];
+  for (const m of document.querySelectorAll(
+    'p, .error, .warning, .notice, [class*="message"], [class*="status"]'
+  )) {
+    if (messages.length >= 6) break;
+    if (!m.getClientRects().length) continue;
+    if (m.querySelector('a, button, input, select, textarea')) continue;
+    const t = norm(m.textContent);
+    if (!t || t.length > 300 || messages.includes(t)) continue;
+    messages.push(t);
+    // Error-classed messages are tracked separately: replay treats an
+    // unrecorded error message as "the step did not land in the recorded
+    // state" (e.g. ParaBank's 'Invalid date format' validation spans all
+    // carry class="error").
+    if (/(?:^|\s)error(?:\s|$)/i.test(m.className || '')) {
+      errorMessages.push(t);
+    }
+  }
   return {
     title: document.title,
     identity: (heading ? norm(heading.textContent) : '') || document.title,
+    messages: messages,
+    errorMessages: errorMessages,
     url: location.href,
     elements: visible.map((el, i) => {
       const tag = el.tagName.toLowerCase();
@@ -158,7 +188,7 @@ _OBSERVE_JS = r"""
         value: (el.value !== undefined && el.value !== null && el.value !== '')
           ? String(el.value) : null,
         options: (tag === 'select')
-          ? Array.from(el.options).slice(0, 12).map((o) => o.value) : null,
+          ? Array.from(el.options).slice(0, 30).map((o) => o.value) : null,
         id: el.id || null,
         nameAttr: nameAttr,
         text: norm(el.textContent).slice(0, 120) || null,
@@ -209,13 +239,30 @@ class PlaywrightPerceptionAdapter(PerceptionAdapter):
                     )
                 )
             if el["id"]:
+                # A raw '#id' is only valid CSS when the id is a valid CSS
+                # identifier — ParaBank's bill-pay page deliberately gives
+                # the phone input a random UUID id each render (observed
+                # live: a digit-leading UUID made '#<uuid>' an INVALID
+                # selector that killed the action). Ids that are not safe
+                # identifiers use the always-valid attribute form.
+                raw_id = el["id"]
+                id_value = (
+                    f"#{raw_id}"
+                    if re.fullmatch(r"-?[a-zA-Z_][a-zA-Z0-9_-]*", raw_id)
+                    else f'[id="{raw_id}"]'
+                )
                 locators.append(
                     LocatorCandidate(
                         strategy=LocatorStrategy.ID_ATTRIBUTE,
-                        value=f'#{el["id"]}',
+                        value=id_value,
                     )
                 )
-            elif el["nameAttr"]:
+            if el["nameAttr"]:
+                # Emitted ALONGSIDE the id candidate, not as an elif: an id
+                # can be ephemeral (the same random-UUID input above) while
+                # the name attribute is stable across sessions — replay's
+                # first-unique-match (§6a) falls through when the recorded
+                # id candidate dies.
                 locators.append(
                     LocatorCandidate(
                         strategy=LocatorStrategy.ID_ATTRIBUTE,
@@ -253,6 +300,8 @@ class PlaywrightPerceptionAdapter(PerceptionAdapter):
             title=raw["title"],
             page_identity=raw["identity"],
             elements=elements,
+            messages=raw.get("messages", []),
+            error_messages=raw.get("errorMessages", []),
         )
 
     # -- Evidence (§2b: separate, never a decision input) ------------------

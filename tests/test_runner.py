@@ -95,7 +95,7 @@ class TestRunDiscovery:
             [ToolCall(id="2", name="remember", params={"key": "acct", "value": "1"})],
             [ToolCall(id="3", name="finish", params={"summary": "done"})],
         ])
-        result, artifact = run_discovery(
+        result, artifact, _ = run_discovery(
             "Find my account number",
             artifact_name="demo_capability",
             adapter=FakeAdapter(),
@@ -118,13 +118,14 @@ class TestRunDiscovery:
         llm = ScriptedLLM([
             [ToolCall(id="1", name="report_stuck", params={"reason": "lost"})],
         ])
-        result, artifact = run_discovery(
+        result, artifact, _ = run_discovery(
             "g",
             artifact_name="never",
             adapter=FakeAdapter(),
             client=llm,
             allowlist=permissive_allowlist(),
             evidence_dir=tmp_path,
+            pending_dir=tmp_path / "pending",
             run_id="d2",
         )
         assert result.status is RunStatus.STUCK
@@ -160,7 +161,7 @@ class TestRunReplay:
         with sync_playwright() as p:
             browser = p.chromium.launch()
             page = browser.new_page()
-            result = run_replay(
+            result, _ = run_replay(
                 artifact, {},
                 adapter=PlaywrightPerceptionAdapter(page),
                 allowlist=permissive_allowlist(),
@@ -204,11 +205,12 @@ class TestRunReplay:
         with sync_playwright() as p:
             browser = p.chromium.launch()
             page = browser.new_page()
-            result = run_replay(
+            result, _ = run_replay(
                 artifact, {},
                 adapter=PlaywrightPerceptionAdapter(page),
                 allowlist=permissive_allowlist(),
                 evidence_dir=tmp_path,
+                pending_dir=tmp_path / "pending",
                 run_id="r2",
                 retry_delays=(0.0, 0.0),
             )
@@ -256,3 +258,113 @@ class TestCrashEvidenceDurability:
         assert summary["status"] == "crashed"
         assert "simulated LLM outage" in summary["reason"]
         assert (run_dirs[0] / "final.png").exists()
+
+
+class TestEscalationWiring:
+    """§9a: typed non-completed discovery stops and mid-flow replay hard
+    failures are escalation triggers — the InterventionRequest must be
+    persisted to pending_interventions/ the moment it's raised, complete
+    with the context a human needs to act on."""
+
+    def test_stuck_discovery_persists_intervention_request(self, tmp_path) -> None:
+        import json
+
+        from bankops.agent.loop import ToolCall
+        from bankops.runner import run_discovery
+
+        class StuckLLM:
+            def decide(self, messages, tools=None):
+                return [
+                    ToolCall(
+                        id="1",
+                        name="report_stuck",
+                        params={"reason": "login page rejected the credentials"},
+                    )
+                ]
+
+        pending = tmp_path / "pending"
+        result, artifact, request = run_discovery(
+            "Log in with bad credentials",
+            artifact_name="never_saved",
+            adapter=FakeAdapter(),
+            client=StuckLLM(),
+            allowlist=permissive_allowlist(),
+            evidence_dir=tmp_path / "evidence",
+            pending_dir=pending,
+        )
+        assert result.status.value == "stuck"
+        assert artifact is None  # §5c: no artifact from a stuck run
+        assert request is not None
+        assert request.source == "discovery"
+        assert request.step_index == 1
+        assert "login page rejected" in request.reason
+        # Persisted the moment it's raised, complete with observation:
+        saved = json.loads((pending / f"{request.id}.json").read_text())
+        assert saved["run_id"] == request.run_id
+        assert saved["reference"] == "Log in with bad credentials"
+        assert saved["observation"]["url"] == FakeAdapter().observe().url
+
+    def test_completed_discovery_escalates_nothing(self, tmp_path) -> None:
+        from bankops.agent.loop import ToolCall
+        from bankops.runner import run_discovery
+
+        class HappyLLM:
+            def __init__(self):
+                self.calls = 0
+
+            def decide(self, messages, tools=None):
+                self.calls += 1
+                if self.calls == 1:
+                    return [
+                        ToolCall(id="1", name="remember", params={"key": "k", "value": "v"})
+                    ]
+                return [ToolCall(id="2", name="finish", params={"summary": "done"})]
+
+        _, _, request = run_discovery(
+            "quick goal",
+            artifact_name="wired_test",
+            adapter=FakeAdapter(),
+            client=HappyLLM(),
+            allowlist=permissive_allowlist(),
+            evidence_dir=tmp_path / "evidence",
+            pending_dir=tmp_path / "pending",
+        )
+        assert request is None
+        assert not (tmp_path / "pending").exists() or not list(
+            (tmp_path / "pending").glob("*.json")
+        )
+
+    def test_preflight_replay_failure_never_escalates(self, tmp_path) -> None:
+        from bankops.artifact.models import (
+            ActionType,
+            Artifact,
+            Checkpoint,
+            RiskLevel,
+            Step,
+        )
+        from bankops.runner import run_replay
+
+        artifact = Artifact(
+            name="wired_replay",
+            goal="g",
+            steps=[
+                Step(
+                    action=ActionType.NAVIGATE,
+                    navigate_url="http://x/page",
+                    checkpoint=Checkpoint(url="http://x/page", page_identity="p"),
+                )
+            ],
+            terminal_checkpoint=Checkpoint(url="http://x/page", page_identity="p"),
+            risk_level=RiskLevel.READ_ONLY,
+        )
+        result, request = run_replay(
+            artifact,
+            {"some_unknown_param": "1"},  # rejected pre-flight (§6c)
+            adapter=FakeAdapter(),
+            allowlist=permissive_allowlist(),
+            evidence_dir=tmp_path / "evidence",
+            pending_dir=tmp_path / "pending",
+        )
+        assert result.status == "failure"
+        assert result.reason == "invalid_params"
+        assert request is None

@@ -48,11 +48,21 @@ class Observation(BaseModel):
     title: str = ""
     page_identity: str = ""
     elements: list[ObservedElement] = Field(default_factory=list)
+    messages: list[str] = Field(default_factory=list)
+    error_messages: list[str] = Field(default_factory=list)
 
     def render(self) -> str:
         """Compact serialized form shown to the LLM (DECISIONS.md §3a) —
         a closed, numbered set of elements, never raw HTML."""
         lines = [f"URL: {self.url}", f"Page: {self.page_identity}"]
+        for msg in self.messages:
+            # Outcome/status text a human operator would read — e.g. a
+            # loan-denied banner (§4e's "assumed the click worked" class,
+            # observed live: the model was structurally blind to it).
+            # Error-classed messages are flagged distinctly so the model
+            # can tell a business/validation failure from a plain notice.
+            label = "Error" if msg in self.error_messages else "Message"
+            lines.append(f"{label}: {msg}")
         for element in self.elements:
             line = f"[{element.index}] {element.role}"
             if element.name:
@@ -79,7 +89,7 @@ class Observation(BaseModel):
                 [e.index, e.role, e.name, e.value]
                 for e in self.elements
             ]
-            + [self.url],
+            + [self.url, self.messages, self.error_messages],
             sort_keys=False,
         )
         return hashlib.sha256(payload.encode()).hexdigest()

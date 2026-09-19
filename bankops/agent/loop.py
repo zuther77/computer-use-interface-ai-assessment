@@ -163,6 +163,7 @@ class ActionLogEntry(BaseModel):
     url: str = ""
     page_title: str = ""
     page_identity: str = ""
+    error_messages: list[str] = Field(default_factory=list)
     observation_hash: str = ""
     element_role: str = ""
     element_name: str = ""
@@ -255,9 +256,12 @@ class DiscoveryLoop:
                 " Do not narrate intentions: the CURRENT PAGE section above "
                 "IS the live page state — you never need to wait for it or "
                 "ask for it. Respond now with exactly one tool call: "
-                "`observe` for a fresh look, `finish(summary)` if the goal "
-                "is achieved, or `report_stuck(reason)` if you cannot "
-                "proceed."
+                "`observe` for a fresh look, or end the run — "
+                "`finish(summary)` if the goal's actions are done, "
+                "including when the page reports a final business decision "
+                "such as an approval or a denial (describe it in the "
+                "summary; do not deliberate about whether it 'counts'), or "
+                "`report_stuck(reason)` if you cannot proceed."
             )
         return [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -468,6 +472,7 @@ class DiscoveryLoop:
                         url=post_observation.url,
                         page_title=post_observation.title,
                         page_identity=post_observation.page_identity,
+                        error_messages=list(post_observation.error_messages),
                         observation_hash=post_observation.observation_hash,
                         element_role=element.role if element else "",
                         element_name=element.name if element else "",

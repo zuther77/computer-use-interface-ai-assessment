@@ -27,6 +27,11 @@ from bankops.agent.loop import (
 )
 from bankops.artifact.models import Artifact
 from bankops.artifact.recorder import distill
+from bankops.escalation.intervention import (
+    InterventionRequest,
+    escalate_discovery_stop,
+    escalate_replay_failure,
+)
 from bankops.evidence.logger import StepLogger
 from bankops.evidence.paths import artifacts_dir, run_dir
 from bankops.perception.base import PerceptionAdapter
@@ -60,7 +65,8 @@ def run_discovery(
     evidence_dir: str | Path | None = None,
     max_steps: int | None = None,
     progress: Any | None = None,
-) -> tuple[RunResult, Artifact | None]:
+    pending_dir: str | Path | None = None,
+) -> tuple[RunResult, Artifact | None, InterventionRequest | None]:
     """One live discovery run: observe → decide → act with the real LLM,
     logged to evidence/discovery_run_{id}/. If (and only if) it ends via
     ``finish`` (§5c), the run is distilled into an artifact stored in the
@@ -122,6 +128,13 @@ def run_discovery(
         mask_values=result.sensitive_values,
     )
 
+    # §9a: any typed non-completed stop is an escalation trigger — the
+    # request is persisted the moment it's raised, complete with the
+    # current observation and screenshot, for a human to act on.
+    request: InterventionRequest | None = escalate_discovery_stop(
+        result, adapter, run_id=run_id, pending_dir=pending_dir
+    )
+
     artifact: Artifact | None = None
     if result.status is RunStatus.COMPLETED:
         artifact = distill(result, name=artifact_name)
@@ -129,7 +142,7 @@ def run_discovery(
             store = artifacts_dir(evidence_dir=evidence_dir)
             artifact.save(store / f"{artifact_name}.json")
             artifact.save(directory / f"artifact_{artifact_name}.json")
-    return result, artifact
+    return result, artifact, request
 
 
 def run_replay(
@@ -140,9 +153,10 @@ def run_replay(
     allowlist: Allowlist | None = None,
     run_id: str | None = None,
     evidence_dir: str | Path | None = None,
+    pending_dir: str | Path | None = None,
     confirm: bool = False,
     retry_delays: tuple[float, ...] = (0.0, 1.0, 3.0),
-) -> SuccessResult | ReplayResult:
+) -> tuple[ReplayResult, InterventionRequest | None]:
     """One deterministic replay, logged to evidence/replay_success_{id}/
     (renamed to replay_error_{id}/ when the run classifies as a business
     outcome or a failure — the required /evidence/replay_error_*/
@@ -159,11 +173,18 @@ def run_replay(
     )
     result = engine.execute(artifact, params, confirm=confirm)
 
+    replay_request: InterventionRequest | None = None
     if isinstance(result, FailureResult):
         # §10b: business-outcome/failure runs live under replay_error_{id}/.
         error_dir = run_dir("replay_error", run_id, evidence_dir=evidence_dir)
         directory.rename(error_dir)
         directory = error_dir
+        # §9a: mid-flow hard failures are escalation triggers. The function
+        # itself never escalates pre-flight rejections or confirmation
+        # gates — nothing to hand off on the live session.
+        replay_request = escalate_replay_failure(
+            result, adapter, run_id=run_id, pending_dir=pending_dir
+        )
 
     try:
         adapter.capture_screenshot(directory / "final.png")
@@ -190,4 +211,4 @@ def run_replay(
     # streaming logger's path no longer exists.
     StepLogger(directory, run_id=run_id, run_kind="replay").write_summary(summary)
 
-    return result
+    return result, replay_request

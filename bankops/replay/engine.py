@@ -42,11 +42,25 @@ def normalize_url(url: str) -> str:
     return _JSESSIONID.sub("", url).rstrip("/")
 
 
-def checkpoint_matches(checkpoint, observation: Observation) -> bool:
+def checkpoint_matches(
+    checkpoint, observation: Observation, tolerated: frozenset[str] | set[str] = ()
+) -> bool:
     """§4e page-state signature match: URL (session-id-insensitive) plus the
-    stable page-identity signal (with title fallbacks). Shared by the
-    replay engine and the escalation resume verification (§9c) so both
-    verify state with exactly the same rule."""
+    stable page-identity signal (with title fallbacks), plus the
+    error-banner rule: an error-classed page message that the recorded
+    success path did not have means the step did NOT land in the recorded
+    state — observed live when a swapped date-range replay showed
+    ParaBank's 'Invalid date format' error while every URL/heading
+    checkpoint still matched. ``tolerated`` carries errors a recorded
+    RECOVERABLE outcome signature (§7b) already accepted mid-run. Shared
+    by the replay engine and the escalation resume verification (§9c) so
+    both verify state with exactly the same rule."""
+    allowed = getattr(checkpoint, "allowed_error_messages", [])
+    if any(
+        msg not in allowed and msg.strip() not in tolerated
+        for msg in observation.error_messages
+    ):
+        return False
     return normalize_url(checkpoint.url) == normalize_url(
         observation.url
     ) and (
@@ -89,6 +103,10 @@ class ReplayEngine:
         self.allowlist = allowlist
         self.retry_delays = retry_delays
         self.step_logger = step_logger
+        # Error-classed messages a recorded RECOVERABLE outcome signature
+        # (§7b) has accepted mid-run — tolerated by all later checkpoint
+        # verifications, including the terminal one.
+        self._tolerated_errors: set[str] = set()
 
     # -- Public entry point ---------------------------------------------------
 
@@ -223,6 +241,7 @@ class ReplayEngine:
                         # so the run continues to the next step. Full
                         # automatic recovery procedures are a documented
                         # future upgrade, not silently assumed here.
+                        self._tolerated_errors.add(matched_text.strip())
                         self._log(
                             index,
                             step,
@@ -522,8 +541,14 @@ class ReplayEngine:
 
     @staticmethod
     def _observation_str(observation: Observation) -> str:
+        errors = (
+            f", errors={observation.error_messages!r}"
+            if observation.error_messages
+            else ""
+        )
         return (
             f"url={observation.url}, identity={observation.page_identity!r}"
+            f"{errors}"
         )
 
     @staticmethod
@@ -533,12 +558,32 @@ class ReplayEngine:
 
     @staticmethod
     def _checkpoint_str_of(checkpoint) -> str:
-        return (
-            f"url={checkpoint.url}, identity={checkpoint.page_identity!r}"
+        required = getattr(checkpoint, "required_locator", None)
+        req = (
+            f", required_locator={required.strategy.value}="
+            f"{required.value!r}"
+            if required is not None
+            else ""
         )
+        return f"url={checkpoint.url}, identity={checkpoint.page_identity!r}{req}"
 
     def _checkpoint_matches(self, checkpoint, observation: Observation) -> bool:
-        return checkpoint_matches(checkpoint, observation)
+        if not checkpoint_matches(
+            checkpoint, observation, tolerated=self._tolerated_errors
+        ):
+            return False
+        # §4e deliberate goal-tied content check: a manually-authored
+        # required_locator must resolve to at least one element for the
+        # state to count as the recorded one (observed live: a wrong
+        # result set can leave URL, heading and error rules all clean).
+        required = getattr(checkpoint, "required_locator", None)
+        if required is not None:
+            try:
+                if self.adapter.resolve_locator(required).count() < 1:
+                    return False
+            except Exception:
+                return False
+        return True
 
     @staticmethod
     def _normalize_url(url: str) -> str:
