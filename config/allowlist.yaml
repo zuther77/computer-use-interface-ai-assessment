@@ -13,6 +13,14 @@ routes:
   - "/parabank/"
   - "/parabank/*"
 
+denied_routes:
+  # ParaBank's admin page hosts destructive maintenance controls (database
+  # Initialize/Clean/Shutdown, access-mode switching). Explicitly denied
+  # even though it sits inside the allowed /parabank/* space — observed
+  # live: a goal-blocked discovery run reached it and wiped the database.
+  - "/parabank/admin*"
+  - "parabank/contact*"
+
 action_types:
   click: allow
   type_text: allow

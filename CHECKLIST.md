@@ -82,12 +82,13 @@ mechanic. Work top-to-bottom; items marked ✅ are already done and verified.
 - [x] ✅ Live `INTERVENTION RAISED` demo exists:
       `pending_interventions/05831c8edf7b4e75909af113a838a691.json` (+ pause
       screenshot) from run `discovery_20260917_164515`.
-- [ ] **The resume loop was never walked live** — the handoff ended when the
-      browser window was closed (no `.resume` consumed, no `human_log.json`).
-      Either re-run a short escalation demo and complete it
-      (`echo mark_complete > pending_interventions/{id}.resume`) so
-      `{id}.human_log.json` exists as evidence, or note the documented cut
-      (CLI records decisions but doesn't resurrect the loop mid-run).
+- [x] ✅ A live handoff was completed Sep 21 (run `…162029`, request
+      `7d9a4f7c…`): human logged in during the pause, `verify` consumed,
+      `human_log.json` written with before/after captures + nav trail.
+- [ ] **Replay partial-resume remains a documented cut** — the replay
+      handoff records the human's decision but does not resume the engine
+      mid-run (no partial-resume API). Discovery resume IS implemented
+      (§9c: a `RESUME` signal continues the loop from the human's state).
 - [ ] Clean stale files from `pending_interventions/` (the demo request is
       evidence; anything else test-generated should go).
 
@@ -96,8 +97,8 @@ mechanic. Work top-to-bottom; items marked ✅ are already done and verified.
 - [ ] **`REPORT.md` — not started** (the plan's final deliverable). Sections
       1–6 from DECISIONS.md; **Section 7 (Cuts) last**, from what actually
       got simplified. Accumulated honest cuts to document:
-      - CLI handoff records decisions but does not resume the loop/engine
-        mid-run.
+      - Replay handoff records decisions but does not resume the engine
+        mid-run (discovery resume IS implemented, §9c).
       - Phone recorded as *integer* input (value-shape type inference, §4c)
         — `+`-prefixed values fail pre-flight.
       - Redaction currently OFF by operator preference (see §2 above).

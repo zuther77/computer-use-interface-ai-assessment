@@ -293,3 +293,91 @@ class TestObserveTool:
         }
         with pytest.raises(AllowlistViolation):
             dispatch(ctx, "observe", {})
+
+
+class TestLinkClickNavigationGuard:
+    """§8a: a link click IS a navigation — the link's absolute href is
+    checked against the allowlist *before* the click executes. Observed
+    live: a discovery run reached ParaBank's admin page by clicking the
+    'Admin Page' link (no navigate tool involved) and then clicked Clean,
+    wiping the database."""
+
+    class _OkLocator:
+        def count(self) -> int:
+            return 1
+
+        def click(self) -> None:
+            pass
+
+    class _LinkAdapter(_StubAdapter):  # noqa: F821 — module helper
+        def observe(self):
+            from bankops.artifact.models import LocatorCandidate, LocatorStrategy
+            from bankops.perception.base import (
+                Observation,
+                ObservedElement,
+            )
+
+            return Observation(
+                url="http://localhost:8080/parabank/index.htm",
+                title="ParaBank",
+                page_identity="Customer Login",
+                elements=[
+                    ObservedElement(
+                        index=0,
+                        tag="a",
+                        role="link",
+                        name="Admin Page",
+                        href="http://localhost:8080/parabank/admin.htm",
+                        locators=[
+                            LocatorCandidate(
+                                strategy=LocatorStrategy.ID_ATTRIBUTE,
+                                value="#admin-link",
+                            )
+                        ],
+                    ),
+                    ObservedElement(
+                        index=1,
+                        tag="a",
+                        role="link",
+                        name="Accounts Overview",
+                        href="http://localhost:8080/parabank/overview.htm",
+                        locators=[
+                            LocatorCandidate(
+                                strategy=LocatorStrategy.ID_ATTRIBUTE,
+                                value="#overview",
+                            )
+                        ],
+                    ),
+                ],
+            )
+
+        def resolve_locator(self, candidate):
+            return TestLinkClickNavigationGuard._OkLocator()
+
+    def _ctx(self, denied) -> "ToolContext":  # noqa: F821 — module import
+        from bankops.actions.tools import ToolContext
+        from bankops.safety.allowlist import Allowlist
+
+        ctx = ToolContext(
+            adapter=self._LinkAdapter(),
+            allowlist=Allowlist(
+                domains=["*"],
+                routes=["/parabank/*"],
+                denied_routes=["/parabank/admin*"] if denied else [],
+                schemes=["http"],
+                action_types={"click": "allow"},
+            ),
+        )
+        ctx.refresh_observation()
+        return ctx
+
+    def test_denied_link_click_blocked_before_execution(self) -> None:
+        from bankops.safety.allowlist import AllowlistViolation
+
+        with pytest.raises(AllowlistViolation, match="explicitly denied"):
+            click(self._ctx(denied=True), 0)
+
+    def test_allowed_link_click_proceeds(self) -> None:
+        result = click(self._ctx(denied=False), 1)
+        assert result.status is ToolStatus.SUCCESS
+        assert "Accounts Overview" in result.message

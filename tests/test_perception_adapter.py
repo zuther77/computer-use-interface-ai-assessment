@@ -337,3 +337,30 @@ class TestLegacyTableLayouts:
                 assert locator.count() == 1
         finally:
             page.goto(FIXTURE.as_uri())
+
+
+    def test_link_hrefs_collected_for_navigation_guard(self, adapter) -> None:
+        """§8a link-click guard: the adapter must record each anchor's
+        absolute href so the click tool can check the navigation target
+        before executing (observed live: the 'Admin Page' link bypassed
+        route checks entirely). Non-link elements carry no href."""
+
+        page = adapter.page
+        page.set_content(
+            "<html><body><h1 class='title'>Test Page</h1>"
+            "<a id='admin-link' href='/parabank/admin.htm'>Admin Page</a>"
+            "<a id='overview' href='/parabank/overview.htm'>Overview</a>"
+            "<input id='q'>"
+            "</body></html>"
+        )
+        try:
+            observation = adapter.observe()
+            by_name = {e.name: e for e in observation.elements}
+            assert by_name["Admin Page"].href.endswith("/parabank/admin.htm")
+            assert by_name["Overview"].href.endswith("/parabank/overview.htm")
+            text_input = next(
+                e for e in observation.elements if e.tag == "input"
+            )
+            assert text_input.href is None
+        finally:
+            page.goto(FIXTURE.as_uri())

@@ -368,3 +368,123 @@ class TestEscalationWiring:
         assert result.status == "failure"
         assert result.reason == "invalid_params"
         assert request is None
+
+
+class TestDiscoveryResumeAfterHandoff:
+    """§9c: a discovery resume continues the loop's normal per-step cycle
+    from the human's state — the resumed loop re-observes first, keeps the
+    accumulated action history (§3c), and continues the evidence step
+    numbering. Observed live: a `verify` resume ended the run instead."""
+
+    @staticmethod
+    def _resume_handoff(request):
+        from bankops.escalation.handoff import HandoffAction, HandoffResult
+
+        # A stubbed handoff: the human logged in and wrote `verify`.
+        return HandoffResult(
+            action=HandoffAction.RESUME,
+            signal="verify",
+            verified=True,
+            observation=request.observation,
+            request=request,
+        )
+
+    def test_resume_continues_loop_to_completion(self, tmp_path) -> None:
+        import json
+
+        llm = ScriptedLLM(
+            [
+                [ToolCall(id="1", name="report_stuck", params={"reason": "login rejected"})],
+                # The resumed cycle performs a real page action before
+                # finishing — the recorder drops pure control signals
+                # (§5a) and would distill nothing otherwise.
+                [ToolCall(id="2", name="click", params={"index": 0})],
+                [ToolCall(id="3", name="finish", params={"summary": "done after human login"})],
+            ]
+        )
+        result, artifact, request = run_discovery(
+            "Log in",
+            artifact_name="resumed_capability",
+            adapter=FakeAdapter(),
+            client=llm,
+            allowlist=permissive_allowlist(),
+            evidence_dir=tmp_path,
+            pending_dir=tmp_path / "pending",
+            handoff=self._resume_handoff,
+        )
+        assert result.status is RunStatus.COMPLETED
+        assert "done after human login" in result.reason
+        assert artifact is not None  # the resumed run finished → §5c distill
+        # The intervention was raised and persisted…
+        assert request is not None
+        saved = json.loads(
+            (tmp_path / "pending" / f"{request.id}.json").read_text()
+        )
+        assert saved["source"] == "discovery"
+        # …the evidence log covers BOTH cycles with continuous numbering:
+        folder = next(tmp_path.glob("discovery_run_*"))
+        steps = [
+            json.loads(l)
+            for l in (folder / "steps.jsonl").read_text().strip().splitlines()
+        ]
+        assert [s["step"] for s in steps] == [1, 2, 3]
+        assert [s["action"] for s in steps] == ["report_stuck", "click", "finish"]
+        # …and the summary records the handoff cycle:
+        summary = json.loads((folder / "summary.json").read_text())
+        assert summary["status"] == "completed"
+        assert summary["handoffs"] == [
+            {
+                "request_id": request.id,
+                "action": "resume",
+                "verified": True,
+            }
+        ]
+
+    def test_mark_complete_handoff_ends_run_without_distill(self, tmp_path) -> None:
+        from bankops.escalation.handoff import HandoffAction, HandoffResult
+
+        llm = ScriptedLLM(
+            [[ToolCall(id="1", name="report_stuck", params={"reason": "blocked"})]]
+        )
+
+        def mark_complete(request):
+            return HandoffResult(
+                action=HandoffAction.MARK_COMPLETE,
+                signal="mark_complete",
+                verified=False,
+                observation=request.observation,
+                request=request,
+            )
+
+        result, artifact, request = run_discovery(
+            "g",
+            artifact_name="never_distilled",
+            adapter=FakeAdapter(),
+            client=llm,
+            allowlist=permissive_allowlist(),
+            evidence_dir=tmp_path,
+            pending_dir=tmp_path / "pending",
+            handoff=mark_complete,
+        )
+        # §5c stays strict: only finish-terminated runs distill; a human
+        # mark_complete ends the run without inventing an artifact.
+        assert result.status is RunStatus.STUCK
+        assert artifact is None
+        assert request is not None
+
+    def test_no_handoff_leaves_request_pending(self, tmp_path) -> None:
+        llm = ScriptedLLM(
+            [[ToolCall(id="1", name="report_stuck", params={"reason": "lost"})]]
+        )
+        result, artifact, request = run_discovery(
+            "g",
+            artifact_name="never",
+            adapter=FakeAdapter(),
+            client=llm,
+            allowlist=permissive_allowlist(),
+            evidence_dir=tmp_path,
+            pending_dir=tmp_path / "pending",
+        )
+        assert result.status is RunStatus.STUCK
+        assert request is not None
+        assert (tmp_path / "pending" / f"{request.id}.json").exists()

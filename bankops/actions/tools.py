@@ -102,6 +102,12 @@ def _resolve_unique(ctx: ToolContext, index: int):
 def click(ctx: ToolContext, index: int) -> ToolResult:
     ctx.allowlist.check_action("click")
     element, _, locator = _resolve_unique(ctx, index)
+    # §8a: a link click IS a navigation — check its target before
+    # executing (observed live: a discovery run reached ParaBank's admin
+    # page by clicking the "Admin Page" link and clicked "Clean", wiping
+    # the database, because only the navigate tool checked routes).
+    if element.href:
+        ctx.allowlist.check_navigate(element.href)
     locator.click()
     return ToolResult(
         action="click",

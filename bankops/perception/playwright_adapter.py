@@ -189,6 +189,7 @@ _OBSERVE_JS = r"""
           ? String(el.value) : null,
         options: (tag === 'select')
           ? Array.from(el.options).slice(0, 30).map((o) => o.value) : null,
+        href: (tag === 'a' && el.href) ? el.href : null,
         id: el.id || null,
         nameAttr: nameAttr,
         text: norm(el.textContent).slice(0, 120) || null,
@@ -291,6 +292,7 @@ class PlaywrightPerceptionAdapter(PerceptionAdapter):
                     name=el["name"],
                     value=el["value"],
                     options=el.get("options"),
+                    href=el.get("href"),
                     locators=locators,
                 )
             )

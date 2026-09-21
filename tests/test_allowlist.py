@@ -84,3 +84,36 @@ class TestConfigLoading:
         allowlist.check_action("click")
         with pytest.raises(AllowlistViolation):
             allowlist.check_navigate("http://evil.com/")
+
+
+class TestDeniedRoutes:
+    """§8a deny-first semantics: an explicitly denied route blocks
+    navigation even when a broader allowed pattern also matches it.
+    Observed live: a goal-blocked discovery run navigated to ParaBank's
+    admin page (inside the allowed /parabank/* space) and clicked Clean,
+    wiping the database."""
+
+    def test_denied_route_beats_allowed_pattern(self) -> None:
+        from bankops.safety.allowlist import Allowlist, AllowlistViolation
+
+        allowlist = Allowlist(
+            domains=["*"],
+            routes=["/parabank/*"],
+            denied_routes=["/parabank/admin*"],
+            schemes=["http"],
+        )
+        # Still allowed: the normal application routes.
+        allowlist.check_navigate("http://localhost:8080/parabank/transfer.htm")
+        with pytest.raises(AllowlistViolation, match="explicitly denied"):
+            allowlist.check_navigate("http://localhost:8080/parabank/admin.htm")
+
+    def test_shipped_config_denies_admin_page(self) -> None:
+        """The repo's own config must deny ParaBank's admin page (the live
+        incident's escape route) while permitting normal application
+        pages."""
+        from bankops.safety.allowlist import Allowlist, AllowlistViolation
+
+        allowlist = Allowlist.load("config/allowlist.yaml")
+        allowlist.check_navigate("http://localhost:8080/parabank/transfer.htm")
+        with pytest.raises(AllowlistViolation, match="explicitly denied"):
+            allowlist.check_navigate("http://localhost:8080/parabank/admin.htm")

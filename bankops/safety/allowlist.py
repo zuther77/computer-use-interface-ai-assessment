@@ -29,6 +29,12 @@ class Allowlist(BaseModel):
 
     domains: list[str] = Field(default_factory=list)
     routes: list[str] = Field(default_factory=list)
+    # Deny-first (§8a): explicitly forbidden routes, checked before the
+    # allowed set — e.g. ParaBank's admin page hosts destructive controls
+    # (database Initialize/Clean/Shutdown, access-mode switching) inside
+    # the otherwise-allowed /parabank/* route space. Observed live: a
+    # goal-blocked discovery run navigated there and wiped the database.
+    denied_routes: list[str] = Field(default_factory=list)
     action_types: dict[str, str] = Field(default_factory=dict)
     schemes: list[str] = Field(default_factory=lambda: ["http", "https"])
 
@@ -61,6 +67,14 @@ class Allowlist(BaseModel):
             raise AllowlistViolation(
                 f"navigation blocked: scheme '{parts.scheme}' not allowed "
                 f"(allowed: {self.schemes})"
+            )
+        # Deny-first (§8a): an explicitly denied route blocks navigation
+        # even when a broader allowed pattern also matches it.
+        path = parts.path or "/"
+        if any(self._route_matches(route, path) for route in self.denied_routes):
+            raise AllowlistViolation(
+                f"navigation blocked: route '{path}' is explicitly denied "
+                f"(denied routes take precedence over allowed ones)"
             )
         host_port = parts.hostname or ""
         if parts.port:

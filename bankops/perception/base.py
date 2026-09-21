@@ -37,6 +37,7 @@ class ObservedElement(BaseModel):
     name: str = ""
     value: str | None = None
     options: list[str] | None = None
+    href: str | None = None
     locators: list[LocatorCandidate] = Field(default_factory=list)
 
 

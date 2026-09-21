@@ -66,13 +66,14 @@ def _print_replay_result(result) -> int:
     return 1
 
 
-def _run_handoff_cli(adapter, request, *, expected_checkpoint=None) -> None:
+def _run_handoff_cli(adapter, request, *, expected_checkpoint=None):
     """The real §9b handoff: stop issuing commands on the headed browser
     and block for a human resume signal written to
     ``pending_interventions/{id}.resume`` (verify / continue /
-    mark_complete / abandon). Documented cut: the CLI records the human's
-    decision and the §9d human-turn log, but does not resurrect the
-    loop/engine mid-run — the run stays halted with its typed reason."""
+    mark_complete / abandon). Returns the handoff outcome — the discovery
+    runner consumes a RESUME by continuing the loop from the human's state
+    (§9c); for replay runs the decision is recorded (partial replay resume
+    remains a documented cut)."""
     from bankops.escalation.handoff import FileResumeWaiter, HandoffManager
 
     print(
@@ -93,6 +94,7 @@ def _run_handoff_cli(adapter, request, *, expected_checkpoint=None) -> None:
         f"(verified={outcome.verified}) — human turn logged to "
         f"pending_interventions/{request.id}.human_log.json"
     )
+    return outcome
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -206,6 +208,15 @@ def main(argv: list[str] | None = None) -> int:
                         print(f"        ! {event.message[:140]}", flush=True)
 
                 print(f"[discover] run {run_id}: {args.goal}", flush=True)
+                # §9b/§9c: on a typed stop the headed browser pauses for a
+                # human; a resume signal continues the loop from the
+                # human's state. Headless runs pass no handoff — the
+                # request just persists for out-of-band action.
+                handoff = (
+                    (lambda req: _run_handoff_cli(adapter, req))
+                    if args.headed
+                    else None
+                )
                 try:
                     result, artifact, request = run_discovery(
                         args.goal,
@@ -215,6 +226,7 @@ def main(argv: list[str] | None = None) -> int:
                         run_id=run_id,
                         max_steps=args.max_steps,
                         progress=_report_progress,
+                        handoff=handoff,
                     )
                 except Exception as exc:
                     print(
@@ -240,21 +252,21 @@ def main(argv: list[str] | None = None) -> int:
                         "[discover] no artifact saved "
                         "(runs only distill when they end via finish)"
                     )
-                if request is not None:
+                if request is not None and not args.headed:
+                    # Headed runs consumed the handoff inside run_discovery
+                    # (§9b/§9c): pause, human turn, resume-or-end. Headless
+                    # runs have no operator surface — the request persists
+                    # for a human to act on out-of-band.
                     print(
                         f"[discover] INTERVENTION RAISED — "
                         f"pending_interventions/{request.id}.json "
                         f"(reason: {request.reason[:120]})"
                     )
-                    if args.headed:
-                        # §9b: real handoff on the same live session.
-                        _run_handoff_cli(adapter, request)
-                    else:
-                        print(
-                            "[discover] headless run: the session has "
-                            "closed; the pending request documents the "
-                            "stop for a human."
-                        )
+                    print(
+                        "[discover] headless run: the session has "
+                        "closed; the pending request documents the "
+                        "stop for a human."
+                    )
                 return 0 if result.status.value == "completed" else 1
 
             artifact = Artifact.load(args.artifact)

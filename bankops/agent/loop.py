@@ -55,8 +55,24 @@ SYSTEM_PROMPT = (
     "steps. Never invent element indexes that are not in the current "
     "observation, and never attempt to bypass the navigation/action "
     "allowlist — if an action is blocked, choose a different approach. "
+    "Administrative and maintenance pages are off-limits: never click "
+    "destructive controls such as database initialize, clean or shutdown. "
+    "If login credentials are rejected, call `report_stuck` — never try "
+    "to repair the application itself. "
+    "Never invent data the goal does not provide — no addresses, phone "
+    "numbers, zip codes, names, account numbers, SSNs or any other field "
+    "value not stated in the goal. If a required form field has no "
+    "goal-provided value, call `report_stuck` listing exactly which "
+    "values are missing so a human can supply them during the handoff — "
+    "do not guess, use placeholders, or fill values from your own general "
+    "knowledge. "
     "Type monetary amounts as plain numbers without currency symbols "
     "(for example 25.00, not $25.00). "
+    "When the goal specifies a value for a form field, set that field "
+    "explicitly with the appropriate tool even if it already appears to "
+    "hold that value — the recorder can only parameterize values it sees "
+    "set, so a skipped field silently locks the capability to the UI's "
+    "default. "
     "Use `observe` whenever you want a fresh look at the page — never "
     "narrate an intention without acting on it. "
     "Before each tool call, state in one short sentence why this action "
@@ -210,12 +226,18 @@ class DiscoveryLoop:
         no_progress_limit: int = 3,
         step_logger=None,
         on_progress: Callable[[StepProgress], None] | None = None,
+        start_step: int = 1,
+        action_log: list[ActionLogEntry] | None = None,
     ) -> None:
         self.client = client
         self.ctx = ctx
         self.max_steps = max_steps if max_steps is not None else settings.MAX_STEPS
         self.no_progress_limit = no_progress_limit
-        self.action_log: list[ActionLogEntry] = []
+        # Resume support (§9c): a loop continued after a handoff keeps the
+        # accumulated action history (structured state, §3c) and continues
+        # the evidence step numbering where the halted cycle left off.
+        self.start_step = start_step
+        self.action_log: list[ActionLogEntry] = list(action_log or [])
         self.step_logger = step_logger
         self.on_progress = on_progress
 
@@ -303,7 +325,9 @@ class DiscoveryLoop:
         sensitive_seen: list[str] = []
         self.sensitive_seen = sensitive_seen
 
-        for step in range(1, self.max_steps + 1):
+        for step in range(self.start_step, self.start_step + self.max_steps):
+            # max_steps is a per-cycle budget: a resumed cycle (§9c) gets a
+            # fresh budget and continues the numbering from start_step.
             step_start_hash = self.ctx.observation.observation_hash
             messages = self._build_messages(goal) + last_exchange
             calls = self.client.decide(messages)

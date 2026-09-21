@@ -27,11 +27,16 @@ from bankops.agent.loop import (
 )
 from bankops.artifact.models import Artifact
 from bankops.artifact.recorder import distill
+from bankops.escalation.handoff import HandoffAction, HandoffResult
 from bankops.escalation.intervention import (
     InterventionRequest,
     escalate_discovery_stop,
     escalate_replay_failure,
 )
+
+# Bounded pause/resume cycles per discovery run (§9c): a human may verify
+# and resume a halted loop; each resume gets a fresh per-cycle step budget.
+_MAX_HANDOFF_CYCLES = 3
 from bankops.evidence.logger import StepLogger
 from bankops.evidence.paths import artifacts_dir, run_dir
 from bankops.perception.base import PerceptionAdapter
@@ -66,6 +71,7 @@ def run_discovery(
     max_steps: int | None = None,
     progress: Any | None = None,
     pending_dir: str | Path | None = None,
+    handoff: Any | None = None,
 ) -> tuple[RunResult, Artifact | None, InterventionRequest | None]:
     """One live discovery run: observe → decide → act with the real LLM,
     logged to evidence/discovery_run_{id}/. If (and only if) it ends via
@@ -78,15 +84,51 @@ def run_discovery(
     ctx = ToolContext(
         adapter=adapter, allowlist=allowlist or _default_allowlist()
     )
-    loop = DiscoveryLoop(
-        client or OpenAIToolCallingClient(),
-        ctx,
-        max_steps=max_steps,
-        step_logger=logger,
-        on_progress=progress,
-    )
+    handoff_cycles: list[dict[str, Any]] = []
+    request: InterventionRequest | None = None
+    result: RunResult | None = None
+    start_step = 1
+    seed_log: list[ActionLogEntry] = []
     try:
-        result = loop.run(goal)
+        for _cycle in range(_MAX_HANDOFF_CYCLES):
+            loop = DiscoveryLoop(
+                client or OpenAIToolCallingClient(),
+                ctx,
+                max_steps=max_steps,
+                step_logger=logger,
+                on_progress=progress,
+                start_step=start_step,
+                action_log=seed_log,
+            )
+            result = loop.run(goal)
+            if result.status is RunStatus.COMPLETED:
+                break
+            # §9a: any typed non-completed stop is an escalation trigger —
+            # the request is persisted the moment it's raised, complete
+            # with the current observation and screenshot.
+            request = escalate_discovery_stop(
+                result, adapter, run_id=run_id, pending_dir=pending_dir
+            )
+            if handoff is None:
+                break  # headless / library use: the request stays pending
+            outcome = handoff(request)
+            handoff_cycles.append(
+                {
+                    "request_id": request.id,
+                    "action": outcome.action.value,
+                    "verified": outcome.verified,
+                }
+            )
+            if outcome.action is not HandoffAction.RESUME:
+                break  # the human ended the run (mark_complete / abandon)
+            # §9c discovery resume: the loop continues its normal per-step
+            # cycle from the new state — the resumed loop re-observes
+            # first, so whatever the human did becomes the next decision's
+            # input. State (§3c) carries over; step numbering continues.
+            start_step = (
+                result.action_log[-1].step + 1 if result.action_log else start_step
+            )
+            seed_log = list(result.action_log)
     except BaseException as exc:
         # Evidence durability: a mid-run crash must still leave the run's
         # final screenshot and summary behind (§10a/§10b) — the JSONL step
@@ -104,6 +146,8 @@ def run_discovery(
             }
         )
         raise
+
+    assert result is not None
 
     try:
         adapter.capture_screenshot(directory / "final.png")
@@ -124,15 +168,9 @@ def run_discovery(
             "memory": result.memory,
             "final_url": final_url,
             "final_page_identity": final_identity,
+            "handoffs": handoff_cycles,
         },
         mask_values=result.sensitive_values,
-    )
-
-    # §9a: any typed non-completed stop is an escalation trigger — the
-    # request is persisted the moment it's raised, complete with the
-    # current observation and screenshot, for a human to act on.
-    request: InterventionRequest | None = escalate_discovery_stop(
-        result, adapter, run_id=run_id, pending_dir=pending_dir
     )
 
     artifact: Artifact | None = None
