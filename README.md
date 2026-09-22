@@ -104,7 +104,7 @@ password `demo`**:
 # transfer ".00".
 uv run python -m bankops discover \
   --name parabank_transfer_funds \
-  --goal 'Log in to ParaBank as user john with password demo, then transfer $25.00 from your first account to your second account, then log out.'
+  --goal 'Log in to ParaBank as user john with password demo, then transfer $25.00 from account 12345 to 12456, then log out.' --headed
 ```
 
 - Add `--headed` to watch the browser window while the agent works.
@@ -121,7 +121,8 @@ uv run python -m bankops discover \
 ```bash
 uv run python -m bankops replay \
   --artifact evidence/artifacts/parabank_transfer_funds.json \
-  --param amount=25.00 --param from_account=12345
+  --param username=john --param password=demo --param amount=1000
+  --param from_account=12345 --param to_account=12456
 ```
 
 Parameter names come from the artifact — check its declared inputs first:
