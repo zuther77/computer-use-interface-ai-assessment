@@ -212,10 +212,3 @@ tests/          Topic-named test suite (mocked LLM, static fixtures)
 config/         Allowlist + environment templates
 ```
 
-## Status
-
-Phases 0–9 are implemented and test-covered (134 tests). The remaining work is
-the live Phase 10 demonstration runs — a real discovery run, deterministic
-replays, a deliberate non-happy-path capture, and (optionally) a forced
-escalation — which populate `/evidence/` once `LLM_BASE_URL`/`LLM_API_KEY` are
-configured.
