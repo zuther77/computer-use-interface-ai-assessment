@@ -1,0 +1,9 @@
+{
+  "status": "completed",
+  "reason": "Logged in as john/demo, then made a $1000 bill payment to Amex (address 123 Jice, Monuntgoery, New Jersey, 1234423, phone 767-783-9763) to account 6666. Confirmation: \"Bill Payment to Amex in the amount of $1000.00 from account 13455 was successful.\"",
+  "goal": "Log in to ParaBank with as john with password demo, then make a payment to Amex for $1000 with address 123 Jice, Monuntgoery, New Jersey, 1234423, 767-783-9763 to account 6666",
+  "memory": {},
+  "final_url": "http://localhost:8080/parabank/billpay.htm",
+  "final_page_identity": "Bill Payment Service",
+  "handoffs": []
+}

@@ -1,0 +1,496 @@
+{
+  "id": "e2f2111314f546429ff75c0cd6ac4ada",
+  "run_id": "discovery_20260921_163249",
+  "source": "discovery",
+  "reference": "Log in to ParaBank with as john with password demo2",
+  "step_index": 25,
+  "reason": "stuck: Login attempts with username john and password demo2 repeatedly fail with an internal application error (\"An internal error has occurred and has been logged\"), across multiple fresh form submissions. This appears to be a server-side application fault, not a credential rejection I can fix.",
+  "url": "http://localhost:8080/parabank/login.htm",
+  "observation": {
+    "url": "http://localhost:8080/parabank/login.htm",
+    "title": "ParaBank | Error",
+    "page_identity": "Error!",
+    "elements": [
+      {
+        "index": 0,
+        "tag": "a",
+        "role": "link",
+        "name": "",
+        "value": null,
+        "options": null,
+        "href": "http://localhost:8080/parabank/admin.htm",
+        "locators": [
+          {
+            "strategy": "css_structural",
+            "value": "body > div:nth-of-type(1) > div:nth-of-type(1) > a:nth-of-type(1)"
+          }
+        ]
+      },
+      {
+        "index": 1,
+        "tag": "a",
+        "role": "link",
+        "name": "",
+        "value": null,
+        "options": null,
+        "href": "http://localhost:8080/parabank/index.htm",
+        "locators": [
+          {
+            "strategy": "css_structural",
+            "value": "body > div:nth-of-type(1) > div:nth-of-type(1) > a:nth-of-type(2)"
+          }
+        ]
+      },
+      {
+        "index": 2,
+        "tag": "a",
+        "role": "link",
+        "name": "About Us",
+        "value": null,
+        "options": null,
+        "href": "http://localhost:8080/parabank/about.htm",
+        "locators": [
+          {
+            "strategy": "css_structural",
+            "value": "body > div:nth-of-type(1) > div:nth-of-type(2) > ul:nth-of-type(1) > li:nth-of-type(2) > a"
+          }
+        ]
+      },
+      {
+        "index": 3,
+        "tag": "a",
+        "role": "link",
+        "name": "Services",
+        "value": null,
+        "options": null,
+        "href": "http://localhost:8080/parabank/services.htm",
+        "locators": [
+          {
+            "strategy": "css_structural",
+            "value": "body > div:nth-of-type(1) > div:nth-of-type(2) > ul:nth-of-type(1) > li:nth-of-type(3) > a"
+          }
+        ]
+      },
+      {
+        "index": 4,
+        "tag": "a",
+        "role": "link",
+        "name": "Products",
+        "value": null,
+        "options": null,
+        "href": "http://www.parasoft.com/jsp/products.jsp",
+        "locators": [
+          {
+            "strategy": "css_structural",
+            "value": "body > div:nth-of-type(1) > div:nth-of-type(2) > ul:nth-of-type(1) > li:nth-of-type(4) > a"
+          }
+        ]
+      },
+      {
+        "index": 5,
+        "tag": "a",
+        "role": "link",
+        "name": "Locations",
+        "value": null,
+        "options": null,
+        "href": "http://www.parasoft.com/jsp/pr/contacts.jsp",
+        "locators": [
+          {
+            "strategy": "css_structural",
+            "value": "body > div:nth-of-type(1) > div:nth-of-type(2) > ul:nth-of-type(1) > li:nth-of-type(5) > a"
+          }
+        ]
+      },
+      {
+        "index": 6,
+        "tag": "a",
+        "role": "link",
+        "name": "Admin Page",
+        "value": null,
+        "options": null,
+        "href": "http://localhost:8080/parabank/admin.htm",
+        "locators": [
+          {
+            "strategy": "role_name",
+            "value": "role=link name=\"Admin Page\""
+          },
+          {
+            "strategy": "text_content",
+            "value": "Admin Page"
+          },
+          {
+            "strategy": "css_structural",
+            "value": "body > div:nth-of-type(1) > div:nth-of-type(2) > ul:nth-of-type(1) > li:nth-of-type(6) > a"
+          }
+        ]
+      },
+      {
+        "index": 7,
+        "tag": "a",
+        "role": "link",
+        "name": "home",
+        "value": null,
+        "options": null,
+        "href": "http://localhost:8080/parabank/index.htm",
+        "locators": [
+          {
+            "strategy": "role_name",
+            "value": "role=link name=\"home\""
+          },
+          {
+            "strategy": "text_content",
+            "value": "home"
+          },
+          {
+            "strategy": "css_structural",
+            "value": "body > div:nth-of-type(1) > div:nth-of-type(2) > ul:nth-of-type(2) > li:nth-of-type(1) > a"
+          }
+        ]
+      },
+      {
+        "index": 8,
+        "tag": "a",
+        "role": "link",
+        "name": "about",
+        "value": null,
+        "options": null,
+        "href": "http://localhost:8080/parabank/about.htm",
+        "locators": [
+          {
+            "strategy": "role_name",
+            "value": "role=link name=\"about\""
+          },
+          {
+            "strategy": "text_content",
+            "value": "about"
+          },
+          {
+            "strategy": "css_structural",
+            "value": "body > div:nth-of-type(1) > div:nth-of-type(2) > ul:nth-of-type(2) > li:nth-of-type(2) > a"
+          }
+        ]
+      },
+      {
+        "index": 9,
+        "tag": "a",
+        "role": "link",
+        "name": "contact",
+        "value": null,
+        "options": null,
+        "href": "http://localhost:8080/parabank/contact.htm",
+        "locators": [
+          {
+            "strategy": "role_name",
+            "value": "role=link name=\"contact\""
+          },
+          {
+            "strategy": "text_content",
+            "value": "contact"
+          },
+          {
+            "strategy": "css_structural",
+            "value": "body > div:nth-of-type(1) > div:nth-of-type(2) > ul:nth-of-type(2) > li:nth-of-type(3) > a"
+          }
+        ]
+      },
+      {
+        "index": 10,
+        "tag": "input",
+        "role": "textbox",
+        "name": "Username",
+        "value": null,
+        "options": null,
+        "href": null,
+        "locators": [
+          {
+            "strategy": "role_name",
+            "value": "role=textbox name=\"Username\""
+          },
+          {
+            "strategy": "id_attribute",
+            "value": "input[name=\"username\"]"
+          },
+          {
+            "strategy": "css_structural",
+            "value": "body > div:nth-of-type(1) > div:nth-of-type(3) > div:nth-of-type(1) > div > form > div:nth-of-type(1) > input"
+          }
+        ]
+      },
+      {
+        "index": 11,
+        "tag": "input",
+        "role": "textbox",
+        "name": "Password",
+        "value": null,
+        "options": null,
+        "href": null,
+        "locators": [
+          {
+            "strategy": "role_name",
+            "value": "role=textbox name=\"Password\""
+          },
+          {
+            "strategy": "id_attribute",
+            "value": "input[name=\"password\"]"
+          },
+          {
+            "strategy": "css_structural",
+            "value": "body > div:nth-of-type(1) > div:nth-of-type(3) > div:nth-of-type(1) > div > form > div:nth-of-type(2) > input"
+          }
+        ]
+      },
+      {
+        "index": 12,
+        "tag": "input",
+        "role": "button",
+        "name": "Log In",
+        "value": "Log In",
+        "options": null,
+        "href": null,
+        "locators": [
+          {
+            "strategy": "role_name",
+            "value": "role=button name=\"Log In\""
+          },
+          {
+            "strategy": "css_structural",
+            "value": "body > div:nth-of-type(1) > div:nth-of-type(3) > div:nth-of-type(1) > div > form > div:nth-of-type(3) > input"
+          }
+        ]
+      },
+      {
+        "index": 13,
+        "tag": "a",
+        "role": "link",
+        "name": "Forgot login info?",
+        "value": null,
+        "options": null,
+        "href": "http://localhost:8080/parabank/lookup.htm",
+        "locators": [
+          {
+            "strategy": "role_name",
+            "value": "role=link name=\"Forgot login info?\""
+          },
+          {
+            "strategy": "text_content",
+            "value": "Forgot login info?"
+          },
+          {
+            "strategy": "css_structural",
+            "value": "body > div:nth-of-type(1) > div:nth-of-type(3) > div:nth-of-type(1) > div > p:nth-of-type(1) > a"
+          }
+        ]
+      },
+      {
+        "index": 14,
+        "tag": "a",
+        "role": "link",
+        "name": "Register",
+        "value": null,
+        "options": null,
+        "href": "http://localhost:8080/parabank/register.htm",
+        "locators": [
+          {
+            "strategy": "role_name",
+            "value": "role=link name=\"Register\""
+          },
+          {
+            "strategy": "text_content",
+            "value": "Register"
+          },
+          {
+            "strategy": "css_structural",
+            "value": "body > div:nth-of-type(1) > div:nth-of-type(3) > div:nth-of-type(1) > div > p:nth-of-type(2) > a"
+          }
+        ]
+      },
+      {
+        "index": 15,
+        "tag": "a",
+        "role": "link",
+        "name": "Home",
+        "value": null,
+        "options": null,
+        "href": "http://localhost:8080/parabank/index.htm",
+        "locators": [
+          {
+            "strategy": "role_name",
+            "value": "role=link name=\"Home\""
+          },
+          {
+            "strategy": "text_content",
+            "value": "Home"
+          },
+          {
+            "strategy": "css_structural",
+            "value": "body > div:nth-of-type(2) > div > ul:nth-of-type(1) > li:nth-of-type(1) > a"
+          }
+        ]
+      },
+      {
+        "index": 16,
+        "tag": "a",
+        "role": "link",
+        "name": "About Us",
+        "value": null,
+        "options": null,
+        "href": "http://localhost:8080/parabank/about.htm",
+        "locators": [
+          {
+            "strategy": "css_structural",
+            "value": "body > div:nth-of-type(2) > div > ul:nth-of-type(1) > li:nth-of-type(2) > a"
+          }
+        ]
+      },
+      {
+        "index": 17,
+        "tag": "a",
+        "role": "link",
+        "name": "Services",
+        "value": null,
+        "options": null,
+        "href": "http://localhost:8080/parabank/services.htm",
+        "locators": [
+          {
+            "strategy": "css_structural",
+            "value": "body > div:nth-of-type(2) > div > ul:nth-of-type(1) > li:nth-of-type(3) > a"
+          }
+        ]
+      },
+      {
+        "index": 18,
+        "tag": "a",
+        "role": "link",
+        "name": "Products",
+        "value": null,
+        "options": null,
+        "href": "http://www.parasoft.com/jsp/products.jsp",
+        "locators": [
+          {
+            "strategy": "css_structural",
+            "value": "body > div:nth-of-type(2) > div > ul:nth-of-type(1) > li:nth-of-type(4) > a"
+          }
+        ]
+      },
+      {
+        "index": 19,
+        "tag": "a",
+        "role": "link",
+        "name": "Locations",
+        "value": null,
+        "options": null,
+        "href": "http://www.parasoft.com/jsp/pr/contacts.jsp",
+        "locators": [
+          {
+            "strategy": "css_structural",
+            "value": "body > div:nth-of-type(2) > div > ul:nth-of-type(1) > li:nth-of-type(5) > a"
+          }
+        ]
+      },
+      {
+        "index": 20,
+        "tag": "a",
+        "role": "link",
+        "name": "Forum",
+        "value": null,
+        "options": null,
+        "href": "http://forums.parasoft.com/",
+        "locators": [
+          {
+            "strategy": "role_name",
+            "value": "role=link name=\"Forum\""
+          },
+          {
+            "strategy": "text_content",
+            "value": "Forum"
+          },
+          {
+            "strategy": "css_structural",
+            "value": "body > div:nth-of-type(2) > div > ul:nth-of-type(1) > li:nth-of-type(6) > a"
+          }
+        ]
+      },
+      {
+        "index": 21,
+        "tag": "a",
+        "role": "link",
+        "name": "Site Map",
+        "value": null,
+        "options": null,
+        "href": "http://localhost:8080/parabank/sitemap.htm",
+        "locators": [
+          {
+            "strategy": "role_name",
+            "value": "role=link name=\"Site Map\""
+          },
+          {
+            "strategy": "text_content",
+            "value": "Site Map"
+          },
+          {
+            "strategy": "css_structural",
+            "value": "body > div:nth-of-type(2) > div > ul:nth-of-type(1) > li:nth-of-type(7) > a"
+          }
+        ]
+      },
+      {
+        "index": 22,
+        "tag": "a",
+        "role": "link",
+        "name": "Contact Us",
+        "value": null,
+        "options": null,
+        "href": "http://localhost:8080/parabank/contact.htm",
+        "locators": [
+          {
+            "strategy": "role_name",
+            "value": "role=link name=\"Contact Us\""
+          },
+          {
+            "strategy": "text_content",
+            "value": "Contact Us"
+          },
+          {
+            "strategy": "css_structural",
+            "value": "body > div:nth-of-type(2) > div > ul:nth-of-type(1) > li:nth-of-type(8) > a"
+          }
+        ]
+      },
+      {
+        "index": 23,
+        "tag": "a",
+        "role": "link",
+        "name": "www.parasoft.com",
+        "value": null,
+        "options": null,
+        "href": "http://www.parasoft.com/",
+        "locators": [
+          {
+            "strategy": "role_name",
+            "value": "role=link name=\"www.parasoft.com\""
+          },
+          {
+            "strategy": "text_content",
+            "value": "www.parasoft.com"
+          },
+          {
+            "strategy": "css_structural",
+            "value": "body > div:nth-of-type(2) > div > ul:nth-of-type(2) > li:nth-of-type(2) > a"
+          }
+        ]
+      }
+    ],
+    "messages": [
+      "Experience the difference",
+      "Username",
+      "Password",
+      "An internal error has occurred and has been logged.",
+      "© Parasoft. All rights reserved."
+    ],
+    "error_messages": [
+      "An internal error has occurred and has been logged."
+    ]
+  },
+  "screenshot_path": "/Users/zuths/Desktop/Vibe/computer-use-interface-ai-assessment/pending_interventions/e2f2111314f546429ff75c0cd6ac4ada_pause.png",
+  "timestamp": "2026-09-21T20:33:13.869433+00:00"
+}

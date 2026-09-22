@@ -1,0 +1,8 @@
+{
+  "artifact": "parabank_request_loan",
+  "status": "business_outcome",
+  "steps_executed": 8,
+  "step_index": 7,
+  "classification": "business_outcome",
+  "matched_text": "Loan Request Processed\nLoan Provider:\tWealth Securities Dynamic Loans (WSDL)\nDate:\t09-22-2026\nStatus:\tDenied\n\n\n\nYou do not have sufficient funds for the given down payment."
+}

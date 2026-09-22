@@ -1,0 +1,9 @@
+{
+  "artifact": "parabank_pay_bills",
+  "status": "failure",
+  "steps_executed": 13,
+  "reason": "confirmation_required",
+  "failed_step": 13,
+  "expected": "step 13 is the point of no return for an irreversible capability (state_changing_irreversible); re-invoke with confirm=True to execute it",
+  "observed": "invoked without confirm=True"
+}

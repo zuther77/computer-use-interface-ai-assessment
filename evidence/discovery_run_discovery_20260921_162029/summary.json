@@ -1,0 +1,8 @@
+{
+  "status": "stuck",
+  "reason": "Logging in as john/demo2 repeatedly results in \"An internal error has occurred and has been logged.\" after each attempt, including after a fresh navigation to the index page. The credentials are submitted correctly, but the application itself returns an internal server error, and I must not attempt to repair the application.",
+  "goal": "Log in to ParaBank with as john with password demo2",
+  "memory": {},
+  "final_url": "http://localhost:8080/parabank/login.htm",
+  "final_page_identity": "Error!"
+}

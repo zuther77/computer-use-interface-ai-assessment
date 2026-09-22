@@ -1,0 +1,9 @@
+{
+  "artifact": "parabank_request_loan",
+  "status": "failure",
+  "steps_executed": 8,
+  "reason": "terminal_checkpoint_mismatch",
+  "failed_step": 7,
+  "expected": "url=http://localhost:8080/parabank/requestloan.htm, identity='Apply for a Loan', required_locator=css_structural='#requestLoanResult:not([style*=\"none\"])'",
+  "observed": "url=http://localhost:8080/parabank/requestloan.htm, identity='Apply for a Loan', errors=['You do not have sufficient funds for the given down payment.']"
+}

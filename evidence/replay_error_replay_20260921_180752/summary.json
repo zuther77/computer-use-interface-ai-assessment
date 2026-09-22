@@ -1,0 +1,9 @@
+{
+  "artifact": "parabank_pay_bills",
+  "status": "failure",
+  "steps_executed": 13,
+  "reason": "checkpoint_mismatch",
+  "failed_step": 13,
+  "expected": "url=http://localhost:8080/parabank/billpay.htm, identity='Bill Payment Service'",
+  "observed": "url=http://localhost:8080/parabank/billpay.htm, identity='Bill Payment Service', errors=['The account numbers do not match.']"
+}

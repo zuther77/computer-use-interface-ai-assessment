@@ -1,0 +1,463 @@
+{
+  "schema_version": "1.0",
+  "name": "parabank_pay_bills",
+  "goal": "Log in to ParaBank with as john with password demo, then make a payment to Amex for $1000 with address 123 Jice, Monuntgoery, New Jersey to account 6666",
+  "target_base_url": "http://localhost:8080",
+  "steps": [
+    {
+      "action": "type_text",
+      "locator_candidates": [
+        {
+          "strategy": "role_name",
+          "value": "role=textbox name=\"Username\""
+        },
+        {
+          "strategy": "id_attribute",
+          "value": "input[name=\"username\"]"
+        },
+        {
+          "strategy": "css_structural",
+          "value": "body > div:nth-of-type(1) > div:nth-of-type(3) > div:nth-of-type(1) > div > form > div:nth-of-type(1) > input"
+        }
+      ],
+      "input_name": "username",
+      "value": null,
+      "is_constant": false,
+      "output_name": null,
+      "navigate_url": null,
+      "description": "",
+      "checkpoint": {
+        "url": "http://localhost:8080/parabank/index.htm",
+        "page_identity": "Customer Login",
+        "allowed_error_messages": [],
+        "required_locator": null
+      },
+      "outcome_signatures": []
+    },
+    {
+      "action": "type_text",
+      "locator_candidates": [
+        {
+          "strategy": "role_name",
+          "value": "role=textbox name=\"Password\""
+        },
+        {
+          "strategy": "id_attribute",
+          "value": "input[name=\"password\"]"
+        },
+        {
+          "strategy": "css_structural",
+          "value": "body > div:nth-of-type(1) > div:nth-of-type(3) > div:nth-of-type(1) > div > form > div:nth-of-type(2) > input"
+        }
+      ],
+      "input_name": "password",
+      "value": null,
+      "is_constant": false,
+      "output_name": null,
+      "navigate_url": null,
+      "description": "",
+      "checkpoint": {
+        "url": "http://localhost:8080/parabank/index.htm",
+        "page_identity": "Customer Login",
+        "allowed_error_messages": [],
+        "required_locator": null
+      },
+      "outcome_signatures": []
+    },
+    {
+      "action": "click",
+      "locator_candidates": [
+        {
+          "strategy": "role_name",
+          "value": "role=button name=\"Log In\""
+        },
+        {
+          "strategy": "css_structural",
+          "value": "body > div:nth-of-type(1) > div:nth-of-type(3) > div:nth-of-type(1) > div > form > div:nth-of-type(3) > input"
+        }
+      ],
+      "input_name": null,
+      "value": null,
+      "is_constant": false,
+      "output_name": null,
+      "navigate_url": null,
+      "description": "",
+      "checkpoint": {
+        "url": "http://localhost:8080/parabank/overview.htm",
+        "page_identity": "ParaBank | Accounts Overview",
+        "allowed_error_messages": [],
+        "required_locator": null
+      },
+      "outcome_signatures": []
+    },
+    {
+      "action": "click",
+      "locator_candidates": [
+        {
+          "strategy": "role_name",
+          "value": "role=link name=\"Bill Pay\""
+        },
+        {
+          "strategy": "text_content",
+          "value": "Bill Pay"
+        },
+        {
+          "strategy": "css_structural",
+          "value": "body > div:nth-of-type(1) > div:nth-of-type(3) > div:nth-of-type(1) > ul > li:nth-of-type(4) > a"
+        }
+      ],
+      "input_name": null,
+      "value": null,
+      "is_constant": false,
+      "output_name": null,
+      "navigate_url": null,
+      "description": "",
+      "checkpoint": {
+        "url": "http://localhost:8080/parabank/billpay.htm",
+        "page_identity": "Bill Payment Service",
+        "allowed_error_messages": [],
+        "required_locator": null
+      },
+      "outcome_signatures": []
+    },
+    {
+      "action": "type_text",
+      "locator_candidates": [
+        {
+          "strategy": "role_name",
+          "value": "role=textbox name=\"Payee Name:\""
+        },
+        {
+          "strategy": "id_attribute",
+          "value": "input[name=\"payee.name\"]"
+        },
+        {
+          "strategy": "css_structural",
+          "value": "body > div:nth-of-type(1) > div:nth-of-type(3) > div:nth-of-type(2) > div > div:nth-of-type(1) > form > table > tbody > tr:nth-of-type(1) > td:nth-of-type(2) > input"
+        }
+      ],
+      "input_name": "payee_name",
+      "value": null,
+      "is_constant": false,
+      "output_name": null,
+      "navigate_url": null,
+      "description": "",
+      "checkpoint": {
+        "url": "http://localhost:8080/parabank/billpay.htm",
+        "page_identity": "Bill Payment Service",
+        "allowed_error_messages": [],
+        "required_locator": null
+      },
+      "outcome_signatures": []
+    },
+    {
+      "action": "type_text",
+      "locator_candidates": [
+        {
+          "strategy": "role_name",
+          "value": "role=textbox name=\"Address:\""
+        },
+        {
+          "strategy": "id_attribute",
+          "value": "input[name=\"payee.address.street\"]"
+        },
+        {
+          "strategy": "css_structural",
+          "value": "body > div:nth-of-type(1) > div:nth-of-type(3) > div:nth-of-type(2) > div > div:nth-of-type(1) > form > table > tbody > tr:nth-of-type(2) > td:nth-of-type(2) > input"
+        }
+      ],
+      "input_name": "address",
+      "value": null,
+      "is_constant": false,
+      "output_name": null,
+      "navigate_url": null,
+      "description": "",
+      "checkpoint": {
+        "url": "http://localhost:8080/parabank/billpay.htm",
+        "page_identity": "Bill Payment Service",
+        "allowed_error_messages": [],
+        "required_locator": null
+      },
+      "outcome_signatures": []
+    },
+    {
+      "action": "type_text",
+      "locator_candidates": [
+        {
+          "strategy": "role_name",
+          "value": "role=textbox name=\"City:\""
+        },
+        {
+          "strategy": "id_attribute",
+          "value": "input[name=\"payee.address.city\"]"
+        },
+        {
+          "strategy": "css_structural",
+          "value": "body > div:nth-of-type(1) > div:nth-of-type(3) > div:nth-of-type(2) > div > div:nth-of-type(1) > form > table > tbody > tr:nth-of-type(3) > td:nth-of-type(2) > input"
+        }
+      ],
+      "input_name": "city",
+      "value": null,
+      "is_constant": false,
+      "output_name": null,
+      "navigate_url": null,
+      "description": "",
+      "checkpoint": {
+        "url": "http://localhost:8080/parabank/billpay.htm",
+        "page_identity": "Bill Payment Service",
+        "allowed_error_messages": [],
+        "required_locator": null
+      },
+      "outcome_signatures": []
+    },
+    {
+      "action": "type_text",
+      "locator_candidates": [
+        {
+          "strategy": "role_name",
+          "value": "role=textbox name=\"State:\""
+        },
+        {
+          "strategy": "id_attribute",
+          "value": "input[name=\"payee.address.state\"]"
+        },
+        {
+          "strategy": "css_structural",
+          "value": "body > div:nth-of-type(1) > div:nth-of-type(3) > div:nth-of-type(2) > div > div:nth-of-type(1) > form > table > tbody > tr:nth-of-type(4) > td:nth-of-type(2) > input"
+        }
+      ],
+      "input_name": "state",
+      "value": null,
+      "is_constant": false,
+      "output_name": null,
+      "navigate_url": null,
+      "description": "",
+      "checkpoint": {
+        "url": "http://localhost:8080/parabank/billpay.htm",
+        "page_identity": "Bill Payment Service",
+        "allowed_error_messages": [],
+        "required_locator": null
+      },
+      "outcome_signatures": []
+    },
+    {
+      "action": "type_text",
+      "locator_candidates": [
+        {
+          "strategy": "role_name",
+          "value": "role=textbox name=\"Account #:\""
+        },
+        {
+          "strategy": "id_attribute",
+          "value": "input[name=\"payee.accountNumber\"]"
+        },
+        {
+          "strategy": "css_structural",
+          "value": "body > div:nth-of-type(1) > div:nth-of-type(3) > div:nth-of-type(2) > div > div:nth-of-type(1) > form > table > tbody > tr:nth-of-type(8) > td:nth-of-type(2) > input"
+        }
+      ],
+      "input_name": "account",
+      "value": null,
+      "is_constant": false,
+      "output_name": null,
+      "navigate_url": null,
+      "description": "",
+      "checkpoint": {
+        "url": "http://localhost:8080/parabank/billpay.htm",
+        "page_identity": "Bill Payment Service",
+        "allowed_error_messages": [],
+        "required_locator": null
+      },
+      "outcome_signatures": []
+    },
+    {
+      "action": "type_text",
+      "locator_candidates": [
+        {
+          "strategy": "role_name",
+          "value": "role=textbox name=\"Verify Account #:\""
+        },
+        {
+          "strategy": "id_attribute",
+          "value": "input[name=\"verifyAccount\"]"
+        },
+        {
+          "strategy": "css_structural",
+          "value": "body > div:nth-of-type(1) > div:nth-of-type(3) > div:nth-of-type(2) > div > div:nth-of-type(1) > form > table > tbody > tr:nth-of-type(9) > td:nth-of-type(2) > input"
+        }
+      ],
+      "input_name": "verify_account",
+      "value": null,
+      "is_constant": false,
+      "output_name": null,
+      "navigate_url": null,
+      "description": "",
+      "checkpoint": {
+        "url": "http://localhost:8080/parabank/billpay.htm",
+        "page_identity": "Bill Payment Service",
+        "allowed_error_messages": [],
+        "required_locator": null
+      },
+      "outcome_signatures": []
+    },
+    {
+      "action": "type_text",
+      "locator_candidates": [
+        {
+          "strategy": "role_name",
+          "value": "role=textbox name=\"Amount: $\""
+        },
+        {
+          "strategy": "id_attribute",
+          "value": "input[name=\"amount\"]"
+        },
+        {
+          "strategy": "css_structural",
+          "value": "body > div:nth-of-type(1) > div:nth-of-type(3) > div:nth-of-type(2) > div > div:nth-of-type(1) > form > table > tbody > tr:nth-of-type(11) > td:nth-of-type(2) > input"
+        }
+      ],
+      "input_name": "amount",
+      "value": null,
+      "is_constant": false,
+      "output_name": null,
+      "navigate_url": null,
+      "description": "",
+      "checkpoint": {
+        "url": "http://localhost:8080/parabank/billpay.htm",
+        "page_identity": "Bill Payment Service",
+        "allowed_error_messages": [],
+        "required_locator": null
+      },
+      "outcome_signatures": []
+    },
+    {
+      "action": "click",
+      "locator_candidates": [
+        {
+          "strategy": "role_name",
+          "value": "role=button name=\"Send Payment\""
+        },
+        {
+          "strategy": "css_structural",
+          "value": "body > div:nth-of-type(1) > div:nth-of-type(3) > div:nth-of-type(2) > div > div:nth-of-type(1) > form > table > tbody > tr:nth-of-type(14) > td:nth-of-type(2) > input"
+        }
+      ],
+      "input_name": null,
+      "value": null,
+      "is_constant": false,
+      "output_name": null,
+      "navigate_url": null,
+      "description": "",
+      "checkpoint": {
+        "url": "http://localhost:8080/parabank/billpay.htm",
+        "page_identity": "Bill Payment Service",
+        "allowed_error_messages": [
+          "Zip Code is required.",
+          "Phone number is required."
+        ],
+        "required_locator": null
+      },
+      "outcome_signatures": []
+    },
+    {
+      "action": "click",
+      "locator_candidates": [
+        {
+          "strategy": "role_name",
+          "value": "role=button name=\"Send Payment\""
+        },
+        {
+          "strategy": "css_structural",
+          "value": "body > div:nth-of-type(1) > div:nth-of-type(3) > div:nth-of-type(2) > div > div:nth-of-type(1) > form > table > tbody > tr:nth-of-type(14) > td:nth-of-type(2) > input"
+        }
+      ],
+      "input_name": null,
+      "value": null,
+      "is_constant": false,
+      "output_name": null,
+      "navigate_url": null,
+      "description": "",
+      "checkpoint": {
+        "url": "http://localhost:8080/parabank/billpay.htm",
+        "page_identity": "Bill Payment Service",
+        "allowed_error_messages": [],
+        "required_locator": null
+      },
+      "outcome_signatures": []
+    }
+  ],
+  "inputs": [
+    {
+      "name": "username",
+      "param_type": "string",
+      "required": true,
+      "default": null,
+      "description": "Value for textbox 'Username'"
+    },
+    {
+      "name": "password",
+      "param_type": "string",
+      "required": true,
+      "default": null,
+      "description": "Value for textbox 'Password'"
+    },
+    {
+      "name": "payee_name",
+      "param_type": "string",
+      "required": true,
+      "default": null,
+      "description": "Value for textbox 'Payee Name:'"
+    },
+    {
+      "name": "address",
+      "param_type": "string",
+      "required": true,
+      "default": null,
+      "description": "Value for textbox 'Address:'"
+    },
+    {
+      "name": "city",
+      "param_type": "string",
+      "required": true,
+      "default": null,
+      "description": "Value for textbox 'City:'"
+    },
+    {
+      "name": "state",
+      "param_type": "string",
+      "required": true,
+      "default": null,
+      "description": "Value for textbox 'State:'"
+    },
+    {
+      "name": "account",
+      "param_type": "integer",
+      "required": true,
+      "default": null,
+      "description": "Value for textbox 'Account #:'"
+    },
+    {
+      "name": "verify_account",
+      "param_type": "integer",
+      "required": true,
+      "default": null,
+      "description": "Value for textbox 'Verify Account #:'"
+    },
+    {
+      "name": "amount",
+      "param_type": "integer",
+      "required": true,
+      "default": null,
+      "description": "Value for textbox 'Amount: $'"
+    }
+  ],
+  "outputs": [],
+  "terminal_checkpoint": {
+    "url": "http://localhost:8080/parabank/billpay.htm",
+    "page_identity": "Bill Payment Service",
+    "allowed_error_messages": [],
+    "required_locator": null
+  },
+  "risk_level": "read_only",
+  "point_of_no_return_step": null
+}

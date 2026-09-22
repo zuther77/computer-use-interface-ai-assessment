@@ -1,0 +1,8 @@
+{
+  "status": "completed",
+  "reason": "Logged in as john/demo, filled the loan request form (amount 500000, down payment 6000, from account 13344) and clicked Apply Now. The bank returned an error: \"You do not have sufficient funds for the given down payment.\" The loan request was submitted but declined.",
+  "goal": "Log in to ParaBank as user john with password demo, then request a loan from account 13344 of amount $500000 with a downpayment of $6000",
+  "memory": {},
+  "final_url": "http://localhost:8080/parabank/requestloan.htm",
+  "final_page_identity": "Apply for a Loan"
+}
