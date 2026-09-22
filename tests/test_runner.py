@@ -488,3 +488,111 @@ class TestDiscoveryResumeAfterHandoff:
         assert result.status is RunStatus.STUCK
         assert request is not None
         assert (tmp_path / "pending" / f"{request.id}.json").exists()
+
+
+class TestBusinessOutcomeEvidenceRouting:
+    """§10b: a replay that ends in a recorded business outcome files its
+    evidence under replay_error_{id}/ (demonstrated live Sep 22 with
+    ParaBank's native loan denial, replay_20260922_142953) — and must NOT
+    raise an intervention: a recorded, classified denial is a normal
+    result (§7a), never a handoff."""
+
+    def test_business_outcome_files_under_replay_error(self, tmp_path) -> None:
+        from pathlib import Path
+
+        from playwright.sync_api import sync_playwright
+
+        from bankops.artifact.models import (
+            ActionType,
+            Artifact,
+            Checkpoint,
+            InputParam,
+            LocatorCandidate,
+            LocatorStrategy,
+            OutcomeClass,
+            OutcomeSignature,
+            ParamType,
+            RiskLevel,
+            Step,
+        )
+        from bankops.perception.playwright_adapter import (
+            PlaywrightPerceptionAdapter,
+        )
+        from bankops.replay.results import BusinessOutcomeResult
+
+        page_uri = (Path(__file__).parent / "fixtures" / "outcome_page.html").as_uri()
+        signature = OutcomeSignature(
+            locator=LocatorCandidate(
+                strategy=LocatorStrategy.CSS_STRUCTURAL, value="#error"
+            ),
+            text_pattern="insufficient funds",
+            classification=OutcomeClass.BUSINESS_OUTCOME,
+            description="Transfer amount exceeds account balance",
+        )
+        artifact = Artifact(
+            name="transfer_funds",
+            goal="Transfer funds between accounts",
+            target_base_url=page_uri,
+            steps=[
+                Step(
+                    action=ActionType.NAVIGATE,
+                    navigate_url=page_uri,
+                    checkpoint=Checkpoint(
+                        url=page_uri, page_identity="Transfer Funds"
+                    ),
+                ),
+                Step(
+                    action=ActionType.TYPE_TEXT,
+                    locator_candidates=[
+                        LocatorCandidate(
+                            strategy=LocatorStrategy.ID_ATTRIBUTE,
+                            value="#amount",
+                        )
+                    ],
+                    input_name="amount",
+                    checkpoint=Checkpoint(
+                        url=page_uri, page_identity="Transfer Funds"
+                    ),
+                ),
+                Step(
+                    action=ActionType.CLICK,
+                    locator_candidates=[
+                        LocatorCandidate(
+                            strategy=LocatorStrategy.ID_ATTRIBUTE,
+                            value="#transfer",
+                        )
+                    ],
+                    checkpoint=Checkpoint(
+                        url=page_uri, page_identity="Transfer Complete!"
+                    ),
+                    outcome_signatures=[signature],
+                ),
+            ],
+            inputs=[InputParam(name="amount", param_type=ParamType.DECIMAL)],
+            outputs=[],
+            terminal_checkpoint=Checkpoint(
+                url=page_uri, page_identity="Transfer Funds"
+            ),
+            risk_level=RiskLevel.READ_ONLY,
+        )
+        with sync_playwright() as p:
+            browser = p.chromium.launch()
+            page = browser.new_page()
+            result, request = run_replay(
+                artifact,
+                {"amount": "999999.00"},
+                adapter=PlaywrightPerceptionAdapter(page),
+                allowlist=permissive_allowlist(),
+                evidence_dir=tmp_path,
+                pending_dir=tmp_path / "pending",
+                run_id="bo1",
+                retry_delays=(0.0, 0.0),
+            )
+            browser.close()
+        assert isinstance(result, BusinessOutcomeResult)
+        assert result.step_index == 2
+        assert (tmp_path / "replay_error_bo1").is_dir()
+        assert not (tmp_path / "replay_success_bo1").exists()
+        # §7a/§9a: a recorded business outcome never escalates.
+        assert request is None
+        assert not list((tmp_path / "pending").glob("*.json"))

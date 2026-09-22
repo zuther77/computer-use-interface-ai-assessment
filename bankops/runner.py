@@ -41,7 +41,12 @@ from bankops.evidence.logger import StepLogger
 from bankops.evidence.paths import artifacts_dir, run_dir
 from bankops.perception.base import PerceptionAdapter
 from bankops.replay.engine import ReplayEngine
-from bankops.replay.results import FailureResult, ReplayResult, SuccessResult
+from bankops.replay.results import (
+    BusinessOutcomeResult,
+    FailureResult,
+    ReplayResult,
+    SuccessResult,
+)
 from bankops.safety.allowlist import Allowlist
 
 
@@ -212,17 +217,20 @@ def run_replay(
     result = engine.execute(artifact, params, confirm=confirm)
 
     replay_request: InterventionRequest | None = None
-    if isinstance(result, FailureResult):
+    if isinstance(result, (BusinessOutcomeResult, FailureResult)):
         # §10b: business-outcome/failure runs live under replay_error_{id}/.
         error_dir = run_dir("replay_error", run_id, evidence_dir=evidence_dir)
         directory.rename(error_dir)
         directory = error_dir
-        # §9a: mid-flow hard failures are escalation triggers. The function
-        # itself never escalates pre-flight rejections or confirmation
-        # gates — nothing to hand off on the live session.
-        replay_request = escalate_replay_failure(
-            result, adapter, run_id=run_id, pending_dir=pending_dir
-        )
+        if isinstance(result, FailureResult):
+            # §9a: mid-flow hard failures are escalation triggers. The
+            # function itself never escalates pre-flight rejections or
+            # confirmation gates — nothing to hand off on the live session.
+            # Business outcomes are NOT failures: a recorded, classified
+            # denial is a normal result (§7a), never a handoff.
+            replay_request = escalate_replay_failure(
+                result, adapter, run_id=run_id, pending_dir=pending_dir
+            )
 
     try:
         adapter.capture_screenshot(directory / "final.png")
