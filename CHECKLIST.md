@@ -32,10 +32,10 @@ Status verified against the actual repo state on **Sep 21, 2026**
 - [x] ✅ `/evidence/replay_error_*/` — correct failure classifications
       (swapped-dates `required_locator` miss; `parabank_pay_bills`
       checkpoint_mismatch Sep 21 18:07 → fixed → success at 18:08).
-- [ ] **"No credentials or unmasked sensitive fields under `/evidence/`"
-      is still VIOLATED by choice** — `BANKOPS_REDACT=false`. Re-run the
-      key demo evidence with redaction, or state the deviation explicitly
-      in REPORT.md (§ Safety).
+- [x] ✅ **Redaction deviation stated in REPORT.md §6** (operator
+      preference, `BANKOPS_REDACT=false`; evidence contains ParaBank demo
+      data only; re-enable with `--redact` — the machinery is implemented
+      and test-verified).
 
 ## 3. Artifact store repair — SUPERSEDED
 
@@ -101,9 +101,12 @@ Status verified against the actual repo state on **Sep 21, 2026**
 
 ## 7. Documentation
 
-- [ ] **`REPORT.md` — not started** (the plan's final deliverable). Sections
-      1–6 from DECISIONS.md; **Section 7 (Cuts) last**, from what actually
-      got simplified. Accumulated honest cuts to document:
+- [x] ✅ **`REPORT.md` — written Sep 22** (all 7 sections; §7 Cuts
+      written last from what actually got simplified). The cuts list
+      below was folded in, plus live lessons: hidden-template
+      discriminators, admin-route deny-first + link-click guard, resume
+      semantics, recorder-only-sees-executed-actions, approval-inference
+      note. Originally accumulated cuts:
       - Replay handoff records decisions but does not resume the engine
         mid-run (discovery resume IS implemented, §9c).
       - Phone recorded as *integer* input (value-shape type inference, §4c)
@@ -116,41 +119,40 @@ Status verified against the actual repo state on **Sep 21, 2026**
       - The `--name` overwrite hazard (see §9).
       - The no-fabrication rule is a prompt constraint, not a deterministic
         gate (grounding checks would be the fuzzy matching §7a rejects).
-- [ ] **README**: escalation is documented; add the new §9c resume
-      semantics (a `RESUME` signal now continues the discovery loop from
-      the human's state). Your uncommitted README tweak (goal wording) is
-      still unstaged.
-- [ ] **Docs match reality**: DECISIONS.md says "GLM-5.2"; the actual
-      provider is `subconscious/glm-5.3-marathon` via the OpenAI SDK.
-      One reconciling line in REPORT.md (provider swap is a
-      `base_url` change — §2d validated in practice).
+- [x] ✅ **README**: §9c resume semantics documented (a `RESUME` signal
+      continues the discovery loop from the human's state); your goal-
+      wording tweak committed along with it.
+- [x] ✅ **Docs match reality** — carried into REPORT.md §1: GLM via the
+      OpenAI SDK with configurable `base_url`/`api_key`, so a provider
+      swap is a config change, not a rewrite (§2d validated in practice;
+      the exact model string lives in the git-ignored `.env`).
 
 ## 8. Final verification pass
 
 - [x] ✅ Full test suite green: **185/185** (verified Sep 21, commit
       `1b49161`).
-- [ ] Docker reproducibility from a clean clone: `docker compose up -d` +
-      `pip install -e . && playwright install` — one fresh-clone smoke
-      test before submission.
-- [ ] Re-walk this checklist once more after §4/§7 land.
+- [x] ✅ **Fresh-clone smoke test passed Sep 22**: clone → compose config
+      valid → full suite **186/186 with no `.env`** (ParaBank served by the
+      running instance; a second `compose up` would conflict on port 8080).
+- [x] ✅ Re-walked Sep 22 — every closeable item closed; the only
+      remaining one is the optional `--name` overwrite guard below.
 
 ## 9. Submission mechanics — the big gotchas
 
-- [ ] **`/evidence/*` and `/pending_interventions/*` contents are
-      GIT-IGNORED.** Pushing the repo submits WITHOUT the evidence. Either
-      `git add -f evidence/ pending_interventions/` (plus a commit), or
-      zip the whole directory. **Verify the submitted artifact actually
-      contains the evidence.**
+- [x] ✅ **Evidence force-added, committed, pushed, verified** —
+      `git ls-files` shows 51 evidence files + 15 pending-intervention
+      files in the repo (demo-bank data only; deviation documented in
+      REPORT.md §6).
 - [x] ✅ Real LLM API key never committed (verified §1); rotate it before
       submission anyway since it sat in `.env` through many runs.
 - [ ] Optional hardening before the freeze: the `--name` overwrite guard
       (refuse to save over an existing artifact whose `goal` differs) —
       the incident that cost the original transfer-funds artifact.
-- [ ] Tag the submission commit; note the last verified suite run in
-      REPORT.md.
+- [x] ✅ Tagged `submission` on the final commit and pushed it.
 
 ---
 
-**Remaining, condensed:** redaction decision (§2) → REPORT.md (§7) → README
-resume note → force-add evidence → fresh-clone smoke test → tag the
-submission commit.
+**Remaining, condensed:** only the optional `--name` overwrite guard (§9) —
+refuse to save over an existing artifact whose `goal` differs — plus the
+operator's standing option to re-enable redaction (`BANKOPS_REDACT=true`)
+and re-record demo evidence if the §2 checklist wording is wanted literally.
