@@ -162,8 +162,16 @@ echo abandon      > pending_interventions/<id>.resume   # terminate the run
 ```
 
 A `verify` that doesn't match the expected checkpoint raises a *new* intervention
-rather than guessing. A complete worked example (persistence, verification
-branch, all four override paths) is in `tests/test_escalation.py`.
+rather than guessing. For **discovery runs**, a `verify`/`continue` resume does
+more than release the pause: the agent loop **continues from the human's state** —
+it re-observes the page first (so whatever you fixed in the browser becomes its
+next input), keeps its action history, and continues the evidence step numbering
+(bounded to three pause/resume cycles per run). For **replay runs**, resume
+records the decision and verifies the next checkpoint; a partial
+mid-artifact resume is a documented cut (see `REPORT.md` §7). A complete
+worked example (persistence, verification branch, all four override paths) is
+in `tests/test_escalation.py`, and the full discovery resume cycle is covered
+in `tests/test_runner.py::TestDiscoveryResumeAfterHandoff`.
 
 ## Evidence layout
 
